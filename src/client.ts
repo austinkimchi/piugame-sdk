@@ -11,6 +11,7 @@ import * as http from "node:http";
 import * as https from "node:https";
 import {
   parseBestScorePage,
+  parsePumbilityScore,
   parsePlayerData,
   parseRecentPlays,
   parseTitleEntries,
@@ -532,13 +533,18 @@ export class PiuClient {
       endpoint: "player_data",
       cacheTtlMs: this.cacheTtl.playerDataMs,
       loader: async () => {
-        const response = await this.authenticatedRequest(username, {
+        const playDataResponse = await this.authenticatedRequest(username, {
           method: "GET",
           path: "/my_page/play_data.php",
           redirect: "manual",
         });
 
-        return parsePlayerData(response.body, username);
+        const parsed = parsePlayerData(playDataResponse.body, username);
+        const pumbilityScore = await this.fetchPumbilityScore(username);
+        return {
+          ...parsed,
+          pumbilityScore,
+        };
       },
     });
   }
@@ -596,8 +602,13 @@ export class PiuClient {
     });
 
     const parsed = parsePlayerData(response.body, username);
-    await this.writeCache(username, this.buildCacheKey(username, "player_data"), "player_data", parsed, this.cacheTtl.playerDataMs);
-    return parsed;
+    const pumbilityScore = await this.fetchPumbilityScore(username, true);
+    const result: PlayerData = {
+      ...parsed,
+      pumbilityScore,
+    };
+    await this.writeCache(username, this.buildCacheKey(username, "player_data"), "player_data", result, this.cacheTtl.playerDataMs);
+    return result;
   }
 
   public async fetchAllPlays(username: string): Promise<FetchAllPlaysResult> {
@@ -695,6 +706,24 @@ export class PiuClient {
     grade: string | null,
   ): string {
     return [songName, mode ?? "", level ?? "", score ?? "", grade ?? ""].join("|");
+  }
+
+  private async fetchPumbilityScore(
+    username: string,
+    skipEnsureAuthenticated = false,
+  ): Promise<number | null> {
+    try {
+      const response = await this.authenticatedRequest(username, {
+        method: "GET",
+        path: "/my_page/pumbility.php",
+        redirect: "manual",
+        skipEnsureAuthenticated,
+      });
+
+      return parsePumbilityScore(response.body);
+    } catch {
+      return null;
+    }
   }
 
   private async getCachedParsedEndpoint<T>(options: {

@@ -36,6 +36,7 @@ export interface PlayerData {
   gameTag: string | null;
   avatarUrl: string | null;
   pp: number | null;
+  pumbilityScore: number | null;
   lastAccess: string | null;
   recentArcade: string | null;
   playCount: number | null;

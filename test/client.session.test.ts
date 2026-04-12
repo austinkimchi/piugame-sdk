@@ -79,6 +79,7 @@ class MockSsoClient extends PiuClient {
 describe("PiuClient session manager", () => {
   test("valid session path keeps login count stable", async () => {
     const playDataHtml = readFixture("play_data.php");
+    const pumbilityHtml = readFixture("pumpbility.php");
     let loginCalls = 0;
 
     const transport: HttpTransport = async (request) => {
@@ -105,6 +106,16 @@ describe("PiuClient session manager", () => {
         return response(200, playDataHtml, {});
       }
 
+      if (url.pathname === "/my_page/pumbility.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, pumbilityHtml, {});
+      }
+
       return response(404, "not found");
     };
 
@@ -114,6 +125,7 @@ describe("PiuClient session manager", () => {
     const data = await client.getPlayerData("fixture_user");
 
     expect(data.gameIdTag).toBe("PKIMCHI #7501");
+    expect(data.pumbilityScore).toBe(9352);
     expect(loginCalls).toBe(1);
   });
 

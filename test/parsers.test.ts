@@ -6,6 +6,7 @@ import {
   extractLastPageNumber,
   parseBestScorePage,
   parseOwnedTitleCount,
+  parsePumbilityScore,
   parsePlayerData,
   parseRecentPlays,
   parseTitleEntries,
@@ -66,6 +67,12 @@ describe("parsers", () => {
     expect(second.score).toBe(927332);
     expect(second.grade).toBe("aa_p");
     expect(second.plate).toBe("fg");
+  });
+
+  test("parsePumbilityScore extracts total score", () => {
+    const html = readFixture("pumpbility.php");
+    const score = parsePumbilityScore(html);
+    expect(score).toBe(9352);
   });
 
   test("parseTitleEntries extracts title state and metadata", () => {

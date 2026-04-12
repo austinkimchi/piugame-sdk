@@ -150,6 +150,7 @@ export function parsePlayerData(html: string, username: string): PlayerData {
     gameTag,
     avatarUrl: parseBackgroundImageUrl(profile.find(".profile_img .re").attr("style")),
     pp: parseNumber(profile.find(".profile_etc .tt").first().text()),
+    pumbilityScore: null,
     lastAccess,
     recentArcade,
     playCount: parseNumber($(".board_search .total .t2").first().text()),
@@ -162,6 +163,34 @@ export function parsePlayerData(html: string, username: string): PlayerData {
     progressPercent: parseNumber($(".play_data_wrap .clear_w .graph .num").first().text()),
     plateCounts,
   };
+}
+
+export function parsePumbilityScore(html: string): number | null {
+  const $ = load(html);
+
+  let score: number | null = null;
+
+  $(".pumbility_total_wrap .inn, .pumbility_total_wrap .in_bg1").each((_, element) => {
+    if (score !== null) {
+      return;
+    }
+
+    const root = $(element);
+    const label = cleanText(root.find(".t1").first().text()).toLowerCase();
+    if (!/pumbility|pumpbility/.test(label)) {
+      return;
+    }
+
+    score = parseNumber(root.find(".t2").first().text());
+  });
+
+  if (score !== null) {
+    return score;
+  }
+
+  return parseNumber(
+    $(".pumbility_total_wrap .inn .t2, .pumbility_total_wrap .in_bg1 .t2").first().text(),
+  );
 }
 
 function createEmptyJudgments(): JudgmentCounts {
