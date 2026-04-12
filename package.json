@@ -1,0 +1,49 @@
+{
+  "name": "piugame-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript-first Node.js SDK for PIUGAME session auth and play-data scraping.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run test/login.integration.test.ts",
+    "scrape:png": "node scripts/scrape-png.js",
+    "scrape:png:dry": "node scripts/scrape-png.js --dry-run"
+  },
+  "keywords": [
+    "piugame",
+    "sdk",
+    "typescript",
+    "php-session",
+    "scraper"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "async-mutex": "^0.5.0",
+    "cheerio": "^1.1.2",
+    "mongodb": "^6.16.0",
+    "playwright": "^1.54.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.1",
+    "dotenv": "^16.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  },
+  "private": true
+}
