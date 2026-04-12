@@ -202,18 +202,12 @@ describe("song map client integration", () => {
     const originalCwd = process.cwd();
     const originalFlag = process.env.PIU_SONG_MAP_ENABLE;
     const originalAutoFetchFlag = process.env.PIU_SONG_MAP_AUTO_FETCH;
-    const originalFetch = globalThis.fetch;
     const tempDir = await mkdtemp(resolve(tmpdir(), "piu-song-map-auto-fetch-"));
 
     try {
       process.chdir(tempDir);
       process.env.PIU_SONG_MAP_ENABLE = "1";
       process.env.PIU_SONG_MAP_AUTO_FETCH = "1";
-
-      globalThis.fetch = (async () => {
-        const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
-        return new Response(pngBytes, { status: 200 });
-      }) as typeof fetch;
 
       const transport: HttpTransport = async (request) => {
         const url = new URL(request.url);
@@ -240,6 +234,7 @@ describe("song map client integration", () => {
       };
 
       const client = new PiuClient({ transport });
+      (client as any).requestBinary = async () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
       await client.login("fixture_user", "fixture_password");
       await client.getRecentPlays("fixture_user");
 
@@ -263,7 +258,6 @@ describe("song map client integration", () => {
       } else {
         process.env.PIU_SONG_MAP_AUTO_FETCH = originalAutoFetchFlag;
       }
-      globalThis.fetch = originalFetch;
       await rm(tempDir, { recursive: true, force: true });
     }
   });

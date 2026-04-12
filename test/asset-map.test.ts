@@ -191,6 +191,7 @@ describe("global asset map client integration", () => {
       };
 
       const client = new PiuClient({ transport });
+      (client as any).requestBinary = async () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
       await client.login("user_a", "password_a");
       await client.getPlayerData("user_a");
       await client.getRecentPlays("user_a");
@@ -237,7 +238,6 @@ describe("global asset map client integration", () => {
     const recentPlayedHtml = readFixture("recently_played.php");
     const originalCwd = process.cwd();
     const originalAssetFlag = process.env.PIU_ASSET_MAP_ENABLE;
-    const originalFetch = globalThis.fetch;
     const tempDir = await mkdtemp(resolve(tmpdir(), "piu-asset-map-recover-grade-"));
 
     try {
@@ -259,11 +259,6 @@ describe("global asset map client integration", () => {
           2,
         ),
       );
-
-      globalThis.fetch = (async () => {
-        const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
-        return new Response(pngBytes, { status: 200 });
-      }) as typeof fetch;
 
       const transport: HttpTransport = async (request) => {
         const url = new URL(request.url);
@@ -290,6 +285,7 @@ describe("global asset map client integration", () => {
       };
 
       const client = new PiuClient({ transport });
+      (client as any).requestBinary = async () => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
       await client.login("user_a", "password_a");
       await client.getRecentPlays("user_a");
 
@@ -306,7 +302,6 @@ describe("global asset map client integration", () => {
       } else {
         process.env.PIU_ASSET_MAP_ENABLE = originalAssetFlag;
       }
-      globalThis.fetch = originalFetch;
       await rm(tempDir, { recursive: true, force: true });
     }
   });

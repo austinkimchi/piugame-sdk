@@ -1,5 +1,5 @@
 import { Mutex } from "async-mutex";
-import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -892,19 +892,7 @@ export class PiuClient {
         // File does not exist; continue.
       }
 
-      const response = await fetch(sourceUrl, {
-        method: "GET",
-        headers: {
-          "user-agent": this.userAgent,
-          accept: "image/png,*/*;q=0.8",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`PNG download failed (${response.status}) for ${sourceUrl}`);
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const buffer = await this.downloadBinaryAsset(sourceUrl);
       if (buffer.length === 0) {
         throw new Error(`PNG download returned empty body for ${sourceUrl}`);
       }
@@ -970,7 +958,6 @@ export class PiuClient {
           plateCodes.add(plate);
         }
       }
-
       await Promise.all([
         ...Array.from(gradeCodes).map((grade) =>
           this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/grade/${grade}.png`)),
@@ -979,6 +966,8 @@ export class PiuClient {
           this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/plate/${plate}.png`)),
         ),
       ]);
+
+      await this.recoverMissingGradeAssetsFromMap();
     } catch {
       // Best-effort asset map update; ignore write failures.
     }
@@ -1026,11 +1015,7 @@ export class PiuClient {
       return;
     }
 
-    const decodedPath = decodeURIComponent(parsed.pathname).replace(/^\/+/, "");
-    const relativePath = decodedPath.startsWith("data/")
-      ? decodedPath.slice("data/".length)
-      : decodedPath;
-    const targetPath = path.resolve(process.cwd(), "data", relativePath);
+    const targetPath = this.resolveAssetOutputPath(parsed);
 
     const existing = this.assetImageDownloadLocks.get(targetPath);
     if (existing) {
@@ -1045,20 +1030,7 @@ export class PiuClient {
       } catch {
         // File does not exist; continue.
       }
-
-      const response = await fetch(assetUrl, {
-        method: "GET",
-        headers: {
-          "user-agent": this.userAgent,
-          accept: "image/png,*/*;q=0.8",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`Asset download failed (${response.status}) for ${assetUrl}`);
-      }
-
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const buffer = await this.downloadBinaryAsset(assetUrl);
       if (buffer.length === 0) {
         throw new Error(`Asset download returned empty body for ${assetUrl}`);
       }
@@ -1087,6 +1059,158 @@ export class PiuClient {
     if (queued) {
       await queued;
     }
+  }
+
+  private resolveAssetOutputPath(parsedUrl: URL): string {
+    const decodedPath = decodeURIComponent(parsedUrl.pathname).replace(/^\/+/, "");
+    const relativePath = decodedPath.startsWith("data/")
+      ? decodedPath.slice("data/".length)
+      : decodedPath;
+
+    if (!relativePath || relativePath.includes("..")) {
+      throw new Error(`Unsafe output path resolved from URL: ${parsedUrl.toString()}`);
+    }
+
+    return path.join(process.cwd(), "data", relativePath);
+  }
+
+  private async recoverMissingGradeAssetsFromMap(): Promise<void> {
+    const gradeMapPath = path.resolve(process.cwd(), GRADE_MAP_PATH);
+    let parsed: Record<string, unknown>;
+
+    try {
+      const raw = await readFile(gradeMapPath, "utf8");
+      const decoded = JSON.parse(raw) as unknown;
+      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+        return;
+      }
+
+      parsed = decoded as Record<string, unknown>;
+    } catch {
+      return;
+    }
+
+    const gradeKeys = new Set<string>();
+    for (const key of Object.keys(parsed)) {
+      if (/^[a-z0-9_]+$/i.test(key)) {
+        gradeKeys.add(key.toLowerCase());
+        continue;
+      }
+
+      if (/^[a-z0-9]+\+$/i.test(key)) {
+        gradeKeys.add(key.toLowerCase().replace(/\+$/i, "_p"));
+      }
+    }
+
+    await Promise.all(
+      Array.from(gradeKeys).map((grade) =>
+        this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/grade/${grade}.png`)),
+      ),
+    );
+  }
+
+  private async downloadBinaryAsset(urlText: string): Promise<Buffer> {
+    const fallbackToInsecureTls =
+      parseBooleanEnv(process.env[TLS_FALLBACK_ENV_KEY]) ?? true;
+    const forceInsecureTls = parseBooleanEnv(process.env[INSECURE_TLS_ENV_KEY]) ?? false;
+
+    try {
+      return await this.requestBinary(urlText, forceInsecureTls);
+    } catch (error) {
+      if (
+        !forceInsecureTls &&
+        fallbackToInsecureTls &&
+        isTlsCertificateValidationError(error)
+      ) {
+        return this.requestBinary(urlText, true);
+      }
+
+      throw error;
+    }
+  }
+
+  private async requestBinary(
+    urlText: string,
+    useInsecureTls: boolean,
+    redirectCount = 0,
+  ): Promise<Buffer> {
+    if (redirectCount > DEFAULT_REDIRECT_LIMIT) {
+      throw new Error(`Too many redirects (>${DEFAULT_REDIRECT_LIMIT}) for ${urlText}`);
+    }
+
+    const target = new URL(urlText);
+    const useHttps = target.protocol === "https:";
+    const client = useHttps ? https : http;
+
+    const response = await new Promise<{
+      status: number;
+      headers: Record<string, string | string[] | undefined>;
+      body: Buffer;
+    }>((resolvePromise, rejectPromise) => {
+      const request = client.request(
+        target,
+        {
+          method: "GET",
+          headers: {
+            "user-agent": this.userAgent,
+            accept: "image/png,*/*;q=0.8",
+            referer: this.baseUrl,
+          },
+          agent: useHttps
+            ? new https.Agent({
+                keepAlive: true,
+                rejectUnauthorized: !useInsecureTls,
+              })
+            : new http.Agent({ keepAlive: true }),
+        },
+        (incoming) => {
+          const chunks: Buffer[] = [];
+          incoming.on("data", (chunk) => {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          });
+          incoming.on("end", () => {
+            resolvePromise({
+              status: incoming.statusCode ?? 0,
+              headers: incoming.headers,
+              body: Buffer.concat(chunks),
+            });
+          });
+          incoming.on("error", rejectPromise);
+        },
+      );
+
+      const timeout = setTimeout(() => {
+        request.destroy(new Error(`Asset request timeout after ${this.timeoutMs}ms for ${urlText}`));
+      }, this.timeoutMs);
+
+      request.on("error", (error) => {
+        clearTimeout(timeout);
+        rejectPromise(error);
+      });
+
+      request.on("close", () => {
+        clearTimeout(timeout);
+      });
+
+      request.end();
+    });
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.location;
+      const first = Array.isArray(location) ? location[0] : location;
+      if (!first) {
+        throw new Error(`Redirect response missing Location header for ${urlText}`);
+      }
+
+      const nextUrl = new URL(first, urlText).toString();
+      return this.requestBinary(nextUrl, useInsecureTls, redirectCount + 1);
+    }
+
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Asset download failed (${response.status}) for ${urlText}`);
+    }
+
+    return response.body;
   }
 
   private async hasKnownSession(username: string): Promise<boolean> {
@@ -1891,6 +2015,3 @@ export class PiuClient {
   }
 
 }
-
-
-
