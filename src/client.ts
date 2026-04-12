@@ -15,6 +15,7 @@ import {
   parseRecentPlays,
   parseTitleEntries,
 } from "./parsers";
+import { SongMapStore } from "./song-map";
 import { MongoStorage } from "./storage/mongo";
 import type {
   BestScorePage,
@@ -87,6 +88,8 @@ const DEFAULT_REDIRECT_LIMIT = 5;
 const DEFAULT_SSO_TIMEOUT_MS = 60_000;
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
 const TLS_FALLBACK_ENV_KEY = "PIU_TLS_FALLBACK_INSECURE";
+const SONG_MAP_ENABLE_ENV_KEY = "PIU_SONG_MAP_ENABLE";
+const SONG_MAP_PATH = "data/song-map.json";
 
 const TLS_CERT_ERROR_CODES = new Set([
   "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
@@ -407,6 +410,8 @@ export class PiuClient {
   private readonly ssoAutoResolve: boolean;
   private readonly ssoHeadless: boolean;
   private readonly ssoTimeoutMs: number;
+  private readonly songMapEnabled: boolean;
+  private readonly songMapStore = new SongMapStore(SONG_MAP_PATH);
 
   private readonly sessions = new Map<string, SessionState>();
   private readonly credentials = new Map<string, Credentials>();
@@ -434,6 +439,7 @@ export class PiuClient {
     this.ssoAutoResolve = options.ssoAutoResolve ?? true;
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
+    this.songMapEnabled = parseBooleanEnv(process.env[SONG_MAP_ENABLE_ENV_KEY]) ?? false;
     this.transport =
       options.transport ??
       createDefaultTransport(this.timeoutMs, rejectUnauthorized, allowInsecureTlsFallback);
@@ -485,6 +491,14 @@ export class PiuClient {
 
     this.credentials.set(username, { username, password });
     await this.ensureAuthenticated(username, { force: true });
+
+    if (this.songMapEnabled) {
+      try {
+        await this.getRecentPlays(username);
+      } catch {
+        // Best-effort mapper update should not block successful login.
+      }
+    }
   }
 
   public async logout(username: string): Promise<void> {
@@ -530,7 +544,7 @@ export class PiuClient {
   }
 
   public async getRecentPlays(username: string): Promise<RecentPlay[]> {
-    return this.getCachedParsedEndpoint({
+    const plays = await this.getCachedParsedEndpoint({
       username,
       endpoint: "recent_plays",
       cacheTtlMs: this.cacheTtl.recentPlaysMs,
@@ -544,6 +558,9 @@ export class PiuClient {
         return parseRecentPlays(response.body);
       },
     });
+
+    await this.updateSongMapFromRecentPlays(plays);
+    return plays;
   }
 
   public async getTitle(username: string): Promise<TitleEntry[]> {
@@ -757,6 +774,18 @@ export class PiuClient {
       if (value.username === username || key.startsWith(`${username}:`)) {
         this.inMemoryCache.delete(key);
       }
+    }
+  }
+
+  private async updateSongMapFromRecentPlays(plays: RecentPlay[]): Promise<void> {
+    if (!this.songMapEnabled || plays.length === 0) {
+      return;
+    }
+
+    try {
+      await this.songMapStore.recordRecentPlays(plays);
+    } catch {
+      // Best-effort mapper update; ignore write failures.
     }
   }
 
