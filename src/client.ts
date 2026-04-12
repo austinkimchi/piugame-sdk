@@ -16,9 +16,11 @@ import {
   parseRecentPlays,
   parseTitleEntries,
 } from "./parsers";
+import { GlobalAssetMapStore } from "./asset-map";
 import { SongMapStore } from "./song-map";
 import { MongoStorage } from "./storage/mongo";
 import type {
+  BestPlay,
   BestScorePage,
   CacheTtlConfig,
   EndpointName,
@@ -90,7 +92,11 @@ const DEFAULT_SSO_TIMEOUT_MS = 60_000;
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
 const TLS_FALLBACK_ENV_KEY = "PIU_TLS_FALLBACK_INSECURE";
 const SONG_MAP_ENABLE_ENV_KEY = "PIU_SONG_MAP_ENABLE";
+const ASSET_MAP_ENABLE_ENV_KEY = "PIU_ASSET_MAP_ENABLE";
 const SONG_MAP_PATH = "data/song-map.json";
+const AVATAR_MAP_PATH = "data/avatar-map.json";
+const GRADE_MAP_PATH = "data/grade-map.json";
+const PLATE_MAP_PATH = "data/plate-map.json";
 
 const TLS_CERT_ERROR_CODES = new Set([
   "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
@@ -412,7 +418,13 @@ export class PiuClient {
   private readonly ssoHeadless: boolean;
   private readonly ssoTimeoutMs: number;
   private readonly songMapEnabled: boolean;
+  private readonly assetMapEnabled: boolean;
   private readonly songMapStore = new SongMapStore(SONG_MAP_PATH);
+  private readonly assetMapStore = new GlobalAssetMapStore(
+    AVATAR_MAP_PATH,
+    GRADE_MAP_PATH,
+    PLATE_MAP_PATH,
+  );
 
   private readonly sessions = new Map<string, SessionState>();
   private readonly credentials = new Map<string, Credentials>();
@@ -441,6 +453,7 @@ export class PiuClient {
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
     this.songMapEnabled = parseBooleanEnv(process.env[SONG_MAP_ENABLE_ENV_KEY]) ?? false;
+    this.assetMapEnabled = parseBooleanEnv(process.env[ASSET_MAP_ENABLE_ENV_KEY]) ?? false;
     this.transport =
       options.transport ??
       createDefaultTransport(this.timeoutMs, rejectUnauthorized, allowInsecureTlsFallback);
@@ -528,7 +541,7 @@ export class PiuClient {
   }
 
   public async getPlayerData(username: string): Promise<PlayerData> {
-    return this.getCachedParsedEndpoint({
+    const profile = await this.getCachedParsedEndpoint({
       username,
       endpoint: "player_data",
       cacheTtlMs: this.cacheTtl.playerDataMs,
@@ -547,6 +560,9 @@ export class PiuClient {
         };
       },
     });
+
+    await this.updateAssetMapFromPlayerData(profile);
+    return profile;
   }
 
   public async getRecentPlays(username: string): Promise<RecentPlay[]> {
@@ -566,6 +582,7 @@ export class PiuClient {
     });
 
     await this.updateSongMapFromRecentPlays(plays);
+    await this.updateAssetMapFromRecentPlays(plays);
     return plays;
   }
 
@@ -608,6 +625,7 @@ export class PiuClient {
       pumbilityScore,
     };
     await this.writeCache(username, this.buildCacheKey(username, "player_data"), "player_data", result, this.cacheTtl.playerDataMs);
+    await this.updateAssetMapFromPlayerData(result);
     return result;
   }
 
@@ -681,7 +699,7 @@ export class PiuClient {
   }
 
   private async getBestScorePage(username: string, page: number): Promise<BestScorePage> {
-    return this.getCachedParsedEndpoint({
+    const result = await this.getCachedParsedEndpoint({
       username,
       endpoint: "best_score_page",
       suffix: `:${page}`,
@@ -696,6 +714,9 @@ export class PiuClient {
         return parseBestScorePage(response.body, page);
       },
     });
+
+    await this.updateAssetMapFromBestPlays(result.plays);
+    return result;
   }
 
   private playIdentity(
@@ -815,6 +836,42 @@ export class PiuClient {
       await this.songMapStore.recordRecentPlays(plays);
     } catch {
       // Best-effort mapper update; ignore write failures.
+    }
+  }
+
+  private async updateAssetMapFromPlayerData(profile: PlayerData): Promise<void> {
+    if (!this.assetMapEnabled) {
+      return;
+    }
+
+    try {
+      await this.assetMapStore.recordPlayerData(profile);
+    } catch {
+      // Best-effort asset map update; ignore write failures.
+    }
+  }
+
+  private async updateAssetMapFromRecentPlays(plays: RecentPlay[]): Promise<void> {
+    if (!this.assetMapEnabled || plays.length === 0) {
+      return;
+    }
+
+    try {
+      await this.assetMapStore.recordRecentPlays(plays);
+    } catch {
+      // Best-effort asset map update; ignore write failures.
+    }
+  }
+
+  private async updateAssetMapFromBestPlays(plays: BestPlay[]): Promise<void> {
+    if (!this.assetMapEnabled || plays.length === 0) {
+      return;
+    }
+
+    try {
+      await this.assetMapStore.recordBestPlays(plays);
+    } catch {
+      // Best-effort asset map update; ignore write failures.
     }
   }
 
