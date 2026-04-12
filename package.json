@@ -1,5 +1,5 @@
 {
-  "name": "piugame-sdk",
+  "name": "@austinkimchi/piugame-sdk",
   "version": "0.1.0",
   "description": "TypeScript-first Node.js SDK for PIUGAME session auth and play-data scraping.",
   "main": "dist/index.js",
@@ -19,7 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run test/login.integration.test.ts",
-    "scrape:png": "node scripts/scrape-png.js",
+    "scrape:png": "node --env-file=.env scripts/scrape-png.js",
     "scrape:png:dry": "node scripts/scrape-png.js --dry-run"
   },
   "keywords": [
@@ -30,6 +30,9 @@
     "scraper"
   ],
   "license": "MIT",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "engines": {
     "node": ">=18"
   },
@@ -45,5 +48,5 @@
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
   },
-  "private": true
+  "private": false
 }
