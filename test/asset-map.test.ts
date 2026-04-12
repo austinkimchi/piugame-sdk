@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -228,6 +228,85 @@ describe("global asset map client integration", () => {
       } else {
         process.env.PIU_SONG_MAP_ENABLE = originalSongFlag;
       }
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("recent plays restores missing AA+ entry and missing aa_p.png", async () => {
+    const playDataHtml = readFixture("play_data.php");
+    const recentPlayedHtml = readFixture("recently_played.php");
+    const originalCwd = process.cwd();
+    const originalAssetFlag = process.env.PIU_ASSET_MAP_ENABLE;
+    const originalFetch = globalThis.fetch;
+    const tempDir = await mkdtemp(resolve(tmpdir(), "piu-asset-map-recover-grade-"));
+
+    try {
+      process.chdir(tempDir);
+      process.env.PIU_ASSET_MAP_ENABLE = "1";
+
+      await mkdir(resolve(tempDir, "data", "l_img", "grade"), { recursive: true });
+      await writeFile(
+        resolve(tempDir, "data", "grade-map.json"),
+        JSON.stringify(
+          {
+            aa_p: {
+              firstSeenAt: "2026-01-01T00:00:00.000Z",
+              lastSeenAt: "2026-01-01T00:00:00.000Z",
+              seenCount: 1,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      globalThis.fetch = (async () => {
+        const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+        return new Response(pngBytes, { status: 200 });
+      }) as typeof fetch;
+
+      const transport: HttpTransport = async (request) => {
+        const url = new URL(request.url);
+
+        if (url.pathname === "/bbs/login_check.php") {
+          return response(302, "", {
+            location: "/",
+            "set-cookie": [
+              "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=mockphp; Path=/",
+            ],
+          });
+        }
+
+        if (url.pathname === "/my_page/play_data.php") {
+          return response(200, playDataHtml);
+        }
+
+        if (url.pathname === "/my_page/recently_played.php") {
+          return response(200, recentPlayedHtml);
+        }
+
+        return response(404, "not found");
+      };
+
+      const client = new PiuClient({ transport });
+      await client.login("user_a", "password_a");
+      await client.getRecentPlays("user_a");
+
+      const gradeMap = JSON.parse(await readFile(resolve(tempDir, "data", "grade-map.json"), "utf8"));
+      expect(gradeMap.aa_p).toBeTruthy();
+      expect(gradeMap["AA+"]).toBeTruthy();
+
+      const png = await readFile(resolve(tempDir, "data", "l_img", "grade", "aa_p.png"));
+      expect(png.length).toBeGreaterThan(0);
+    } finally {
+      process.chdir(originalCwd);
+      if (originalAssetFlag === undefined) {
+        delete process.env.PIU_ASSET_MAP_ENABLE;
+      } else {
+        process.env.PIU_ASSET_MAP_ENABLE = originalAssetFlag;
+      }
+      globalThis.fetch = originalFetch;
       await rm(tempDir, { recursive: true, force: true });
     }
   });

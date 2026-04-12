@@ -21,6 +21,15 @@ export function normalizeAssetCode(value: string | null): string | null {
   return normalized || null;
 }
 
+export function toGradeDisplayKey(gradeCode: string | null): string | null {
+  const code = normalizeAssetCode(gradeCode);
+  if (!code) {
+    return null;
+  }
+
+  return code.replace(/_p\b/i, "+").toUpperCase();
+}
+
 export function extractAvatarImageFilename(avatarUrl: string | null): string | null {
   if (!avatarUrl) {
     return null;
@@ -128,8 +137,21 @@ export class GlobalAssetMapStore {
       return;
     }
 
+    const gradeKeys: string[] = [];
+    for (const play of plays) {
+      const normalized = normalizeAssetCode(play.grade);
+      if (normalized) {
+        gradeKeys.push(normalized);
+      }
+
+      const display = toGradeDisplayKey(play.grade);
+      if (display) {
+        gradeKeys.push(display);
+      }
+    }
+
     await Promise.all([
-      this.gradeStore.record(plays.map((play) => normalizeAssetCode(play.grade))),
+      this.gradeStore.record(gradeKeys),
       this.plateStore.record(plays.map((play) => normalizeAssetCode(play.plate))),
     ]);
   }
@@ -139,8 +161,21 @@ export class GlobalAssetMapStore {
       return;
     }
 
+    const gradeKeys: string[] = [];
+    for (const play of plays) {
+      const normalized = normalizeAssetCode(play.grade);
+      if (normalized) {
+        gradeKeys.push(normalized);
+      }
+
+      const display = toGradeDisplayKey(play.grade);
+      if (display) {
+        gradeKeys.push(display);
+      }
+    }
+
     await Promise.all([
-      this.gradeStore.record(plays.map((play) => normalizeAssetCode(play.grade))),
+      this.gradeStore.record(gradeKeys),
       this.plateStore.record(plays.map((play) => normalizeAssetCode(play.plate))),
     ]);
   }

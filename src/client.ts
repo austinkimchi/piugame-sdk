@@ -18,7 +18,7 @@ import {
   parseRecentPlays,
   parseTitleEntries,
 } from "./parsers";
-import { GlobalAssetMapStore } from "./asset-map";
+import { GlobalAssetMapStore, normalizeAssetCode } from "./asset-map";
 import { extractSongImageFilename, SongMapStore } from "./song-map";
 import { MongoStorage } from "./storage/mongo";
 import type {
@@ -437,6 +437,7 @@ export class PiuClient {
   private readonly authLocks = new Map<string, Mutex>();
   private readonly inMemoryCache = new Map<string, CacheEntry>();
   private readonly songImageDownloadLocks = new Map<string, Promise<void>>();
+  private readonly assetImageDownloadLocks = new Map<string, Promise<void>>();
 
   private mongoStorage: MongoStorage | null = null;
 
@@ -941,6 +942,9 @@ export class PiuClient {
 
     try {
       await this.assetMapStore.recordPlayerData(profile);
+      if (profile.avatarUrl) {
+        await this.ensureAssetImageDownloaded(profile.avatarUrl);
+      }
     } catch {
       // Best-effort asset map update; ignore write failures.
     }
@@ -953,6 +957,28 @@ export class PiuClient {
 
     try {
       await this.assetMapStore.recordRecentPlays(plays);
+
+      const gradeCodes = new Set<string>();
+      const plateCodes = new Set<string>();
+      for (const play of plays) {
+        const grade = normalizeAssetCode(play.grade);
+        const plate = normalizeAssetCode(play.plate);
+        if (grade) {
+          gradeCodes.add(grade);
+        }
+        if (plate) {
+          plateCodes.add(plate);
+        }
+      }
+
+      await Promise.all([
+        ...Array.from(gradeCodes).map((grade) =>
+          this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/grade/${grade}.png`)),
+        ),
+        ...Array.from(plateCodes).map((plate) =>
+          this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/plate/${plate}.png`)),
+        ),
+      ]);
     } catch {
       // Best-effort asset map update; ignore write failures.
     }
@@ -965,8 +991,101 @@ export class PiuClient {
 
     try {
       await this.assetMapStore.recordBestPlays(plays);
+
+      const gradeCodes = new Set<string>();
+      const plateCodes = new Set<string>();
+      for (const play of plays) {
+        const grade = normalizeAssetCode(play.grade);
+        const plate = normalizeAssetCode(play.plate);
+        if (grade) {
+          gradeCodes.add(grade);
+        }
+        if (plate) {
+          plateCodes.add(plate);
+        }
+      }
+
+      await Promise.all([
+        ...Array.from(gradeCodes).map((grade) =>
+          this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/grade/${grade}.png`)),
+        ),
+        ...Array.from(plateCodes).map((plate) =>
+          this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/plate/${plate}.png`)),
+        ),
+      ]);
     } catch {
       // Best-effort asset map update; ignore write failures.
+    }
+  }
+
+  private async ensureAssetImageDownloaded(assetUrl: string): Promise<void> {
+    let parsed: URL;
+    try {
+      parsed = new URL(assetUrl);
+    } catch {
+      return;
+    }
+
+    const decodedPath = decodeURIComponent(parsed.pathname).replace(/^\/+/, "");
+    const relativePath = decodedPath.startsWith("data/")
+      ? decodedPath.slice("data/".length)
+      : decodedPath;
+    const targetPath = path.resolve(process.cwd(), "data", relativePath);
+
+    const existing = this.assetImageDownloadLocks.get(targetPath);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const pending = (async () => {
+      try {
+        await access(targetPath);
+        return;
+      } catch {
+        // File does not exist; continue.
+      }
+
+      const response = await fetch(assetUrl, {
+        method: "GET",
+        headers: {
+          "user-agent": this.userAgent,
+          accept: "image/png,*/*;q=0.8",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Asset download failed (${response.status}) for ${assetUrl}`);
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length === 0) {
+        throw new Error(`Asset download returned empty body for ${assetUrl}`);
+      }
+
+      const dir = path.dirname(targetPath);
+      await mkdir(dir, { recursive: true });
+
+      const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+      await writeFile(tempPath, buffer);
+
+      try {
+        await rename(tempPath, targetPath);
+      } catch {
+        await rm(tempPath, { force: true });
+      }
+    })();
+
+    this.assetImageDownloadLocks.set(
+      targetPath,
+      pending.finally(() => {
+        this.assetImageDownloadLocks.delete(targetPath);
+      }),
+    );
+
+    const queued = this.assetImageDownloadLocks.get(targetPath);
+    if (queued) {
+      await queued;
     }
   }
 

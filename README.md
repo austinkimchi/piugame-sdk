@@ -47,7 +47,8 @@ console.log(profile.gameIdTag, profile.rating);
 - `PIU_TLS_FALLBACK_INSECURE=1` (optional): allow TLS fallback retry when cert validation fails
 - `PIU_SONG_MAP_ENABLE=1` (optional): persist `songName -> song_img` mappings from recent plays to `data/song-map.json`
 - `PIU_SONG_MAP_AUTO_FETCH=1` (optional): when `PIU_SONG_MAP_ENABLE=1`, auto-download newly discovered song jacket PNGs to `data/song_img/`
-- `PIU_ASSET_MAP_ENABLE=1` (optional): persist global asset maps to `data/avatar-map.json`, `data/grade-map.json`, and `data/plate-map.json`
+- `PIU_ASSET_MAP_ENABLE=1` (optional): persist global asset maps to `data/avatar-map.json`, `data/grade-map.json`, and `data/plate-map.json`, and auto-recover referenced avatar/grade/plate PNGs under `data/`
+  - Grade map stores both normalized code keys (example: `aa_p`) and display alias keys (example: `AA+`)
 - `PIU_TEST_USERNAME`, `PIU_TEST_PASSWORD` (tests/examples)
 - `PIU_TEST_SSO_USERNAME`, `PIU_TEST_SSO_PASSWORD` (optional override if SSO creds differ)
 
