@@ -23,7 +23,7 @@ describe("parsers", () => {
 
     expect(data.username).toBe("fixture_user");
     expect(data.titleName).toBe("CONRAD FOLLOWER");
-    expect(data.gameIdTag).toBe("PKIMCHI #7501");
+    expect(data.gameIdTag).toBe("PKIMCHI#7501");
     expect(data.gameId).toBe("PKIMCHI");
     expect(data.gameTag).toBe("#7501");
     expect(data.avatarUrl).toContain("/data/avatar_img/");
@@ -67,6 +67,15 @@ describe("parsers", () => {
     expect(second.score).toBe(927332);
     expect(second.grade).toBe("aa_p");
     expect(second.plate).toBe("fg");
+  });
+
+  test("parsePlayerData normalizes spaces around # in gameIdTag", () => {
+    const html = readFixture("play_data.php").replace("PKIMCHI #7501", "PKIMCHI   #   7501");
+    const data = parsePlayerData(html, "fixture_user");
+
+    expect(data.gameIdTag).toBe("PKIMCHI#7501");
+    expect(data.gameId).toBe("PKIMCHI");
+    expect(data.gameTag).toBe("#7501");
   });
 
   test("parsePumbilityScore extracts total score", () => {

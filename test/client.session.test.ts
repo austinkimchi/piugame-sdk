@@ -124,7 +124,7 @@ describe("PiuClient session manager", () => {
     await client.login("fixture_user", "fixture_password");
     const data = await client.getPlayerData("fixture_user");
 
-    expect(data.gameIdTag).toBe("PKIMCHI #7501");
+    expect(data.gameIdTag).toBe("PKIMCHI#7501");
     expect(data.pumbilityScore).toBe(9352);
     expect(loginCalls).toBe(1);
   });
