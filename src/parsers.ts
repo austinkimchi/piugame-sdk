@@ -16,6 +16,16 @@ function cleanText(value: string | undefined | null): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+function normalizeGameIdTag(value: string | undefined | null): string | null {
+  const collapsed = cleanText(value);
+  if (!collapsed) {
+    return null;
+  }
+
+  const normalized = collapsed.replace(/\s*#\s*/g, "#");
+  return normalized || null;
+}
+
 function parseNumber(value: string | undefined | null): number | null {
   const text = cleanText(value);
   const match = text.match(NUMBER_PATTERN);
@@ -87,7 +97,7 @@ function parseGameIdTag(gameIdTag: string | null): { gameId: string | null; game
 
   const split = gameIdTag.split("#");
   if (split.length === 1) {
-    return { gameId: gameIdTag, gameTag: null };
+    return { gameId: cleanText(gameIdTag) || null, gameTag: null };
   }
 
   const gameId = cleanText(split[0]);
@@ -107,7 +117,7 @@ export function parsePlayerData(html: string, username: string): PlayerData {
   }
 
   const titleName = cleanText(profile.find(".profile_name .name_w .t1").first().text()) || null;
-  const gameIdTag = cleanText(profile.find(".profile_name .name_w .t2").first().text()) || null;
+  const gameIdTag = normalizeGameIdTag(profile.find(".profile_name .name_w .t2").first().text());
   const { gameId, gameTag } = parseGameIdTag(gameIdTag);
 
   let lastAccess: string | null = null;
