@@ -196,6 +196,78 @@ describe("song map client integration", () => {
     }
   });
 
+  test("auto-fetch flag downloads newly discovered song jacket PNGs", async () => {
+    const playDataHtml = readFixture("play_data.php");
+    const recentPlayedHtml = readFixture("recently_played.php");
+    const originalCwd = process.cwd();
+    const originalFlag = process.env.PIU_SONG_MAP_ENABLE;
+    const originalAutoFetchFlag = process.env.PIU_SONG_MAP_AUTO_FETCH;
+    const originalFetch = globalThis.fetch;
+    const tempDir = await mkdtemp(resolve(tmpdir(), "piu-song-map-auto-fetch-"));
+
+    try {
+      process.chdir(tempDir);
+      process.env.PIU_SONG_MAP_ENABLE = "1";
+      process.env.PIU_SONG_MAP_AUTO_FETCH = "1";
+
+      globalThis.fetch = (async () => {
+        const pngBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+        return new Response(pngBytes, { status: 200 });
+      }) as typeof fetch;
+
+      const transport: HttpTransport = async (request) => {
+        const url = new URL(request.url);
+
+        if (url.pathname === "/bbs/login_check.php") {
+          return response(302, "", {
+            location: "/",
+            "set-cookie": [
+              "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=mockphp; Path=/",
+            ],
+          });
+        }
+
+        if (url.pathname === "/my_page/play_data.php") {
+          return response(200, playDataHtml, {});
+        }
+
+        if (url.pathname === "/my_page/recently_played.php") {
+          return response(200, recentPlayedHtml, {});
+        }
+
+        return response(404, "not found");
+      };
+
+      const client = new PiuClient({ transport });
+      await client.login("fixture_user", "fixture_password");
+      await client.getRecentPlays("fixture_user");
+
+      const mapPath = resolve(tempDir, "data", "song-map.json");
+      const parsed = JSON.parse(await readFile(mapPath, "utf8"));
+      const battle = parsed["BATTLE NO.1"];
+      const jacketFilename = battle.images[0].filename as string;
+
+      const jacketPath = resolve(tempDir, "data", "song_img", jacketFilename);
+      const written = await readFile(jacketPath);
+      expect(written.length).toBeGreaterThan(0);
+    } finally {
+      process.chdir(originalCwd);
+      if (originalFlag === undefined) {
+        delete process.env.PIU_SONG_MAP_ENABLE;
+      } else {
+        process.env.PIU_SONG_MAP_ENABLE = originalFlag;
+      }
+      if (originalAutoFetchFlag === undefined) {
+        delete process.env.PIU_SONG_MAP_AUTO_FETCH;
+      } else {
+        process.env.PIU_SONG_MAP_AUTO_FETCH = originalAutoFetchFlag;
+      }
+      globalThis.fetch = originalFetch;
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("disabled flag keeps module as no-op", async () => {
     const playDataHtml = readFixture("play_data.php");
     const originalCwd = process.cwd();

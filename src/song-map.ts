@@ -58,14 +58,15 @@ export class SongMapStore {
     this.filePath = filePath;
   }
 
-  public async recordRecentPlays(plays: RecentPlay[]): Promise<void> {
+  public async recordRecentPlays(plays: RecentPlay[]): Promise<string[]> {
     if (plays.length === 0) {
-      return;
+      return [];
     }
 
-    await this.lock.runExclusive(async () => {
+    return this.lock.runExclusive(async () => {
       const map = await this.readCurrentMap();
       let changed = false;
+      const newFilenames = new Set<string>();
 
       for (const play of plays) {
         const key = normalizeSongName(play.songName);
@@ -86,6 +87,7 @@ export class SongMapStore {
           existing.lastSeenAt = at;
           existing.seenCount += 1;
         } else {
+          newFilenames.add(filename);
           entry.images.push({
             filename,
             firstSeenAt: at,
@@ -99,10 +101,11 @@ export class SongMapStore {
       }
 
       if (!changed) {
-        return;
+        return [];
       }
 
       await this.writeMapAtomic(map);
+      return Array.from(newFilenames);
     });
   }
 
@@ -129,4 +132,3 @@ export class SongMapStore {
     await rename(tempPath, this.filePath);
   }
 }
-

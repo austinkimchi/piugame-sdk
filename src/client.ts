@@ -1,4 +1,6 @@
-﻿import { Mutex } from "async-mutex";
+import { Mutex } from "async-mutex";
+import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 import {
   AuthenticationError,
@@ -17,7 +19,7 @@ import {
   parseTitleEntries,
 } from "./parsers";
 import { GlobalAssetMapStore } from "./asset-map";
-import { SongMapStore } from "./song-map";
+import { extractSongImageFilename, SongMapStore } from "./song-map";
 import { MongoStorage } from "./storage/mongo";
 import type {
   BestPlay,
@@ -92,8 +94,10 @@ const DEFAULT_SSO_TIMEOUT_MS = 60_000;
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
 const TLS_FALLBACK_ENV_KEY = "PIU_TLS_FALLBACK_INSECURE";
 const SONG_MAP_ENABLE_ENV_KEY = "PIU_SONG_MAP_ENABLE";
+const SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY = "PIU_SONG_MAP_AUTO_FETCH";
 const ASSET_MAP_ENABLE_ENV_KEY = "PIU_ASSET_MAP_ENABLE";
 const SONG_MAP_PATH = "data/song-map.json";
+const SONG_IMAGE_PATH = "data/song_img";
 const AVATAR_MAP_PATH = "data/avatar-map.json";
 const GRADE_MAP_PATH = "data/grade-map.json";
 const PLATE_MAP_PATH = "data/plate-map.json";
@@ -418,6 +422,7 @@ export class PiuClient {
   private readonly ssoHeadless: boolean;
   private readonly ssoTimeoutMs: number;
   private readonly songMapEnabled: boolean;
+  private readonly songMapAutoFetchEnabled: boolean;
   private readonly assetMapEnabled: boolean;
   private readonly songMapStore = new SongMapStore(SONG_MAP_PATH);
   private readonly assetMapStore = new GlobalAssetMapStore(
@@ -431,6 +436,7 @@ export class PiuClient {
   private readonly ssoCredentials = new Map<string, Credentials>();
   private readonly authLocks = new Map<string, Mutex>();
   private readonly inMemoryCache = new Map<string, CacheEntry>();
+  private readonly songImageDownloadLocks = new Map<string, Promise<void>>();
 
   private mongoStorage: MongoStorage | null = null;
 
@@ -453,6 +459,8 @@ export class PiuClient {
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
     this.songMapEnabled = parseBooleanEnv(process.env[SONG_MAP_ENABLE_ENV_KEY]) ?? false;
+    this.songMapAutoFetchEnabled =
+      parseBooleanEnv(process.env[SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY]) ?? false;
     this.assetMapEnabled = parseBooleanEnv(process.env[ASSET_MAP_ENABLE_ENV_KEY]) ?? false;
     this.transport =
       options.transport ??
@@ -833,9 +841,96 @@ export class PiuClient {
     }
 
     try {
-      await this.songMapStore.recordRecentPlays(plays);
+      const newFilenames = await this.songMapStore.recordRecentPlays(plays);
+      if (!this.songMapAutoFetchEnabled || newFilenames.length === 0) {
+        return;
+      }
+
+      const sourceUrlByFilename = new Map<string, string>();
+      for (const play of plays) {
+        if (!play.songImageUrl) {
+          continue;
+        }
+
+        const filename = extractSongImageFilename(play.songImageUrl);
+        if (!filename || sourceUrlByFilename.has(filename)) {
+          continue;
+        }
+
+        sourceUrlByFilename.set(filename, play.songImageUrl);
+      }
+
+      await Promise.all(
+        newFilenames.map(async (filename) => {
+          const sourceUrl = sourceUrlByFilename.get(filename);
+          if (!sourceUrl) {
+            return;
+          }
+
+          await this.ensureSongImageDownloaded(filename, sourceUrl);
+        }),
+      );
     } catch {
       // Best-effort mapper update; ignore write failures.
+    }
+  }
+
+  private async ensureSongImageDownloaded(filename: string, sourceUrl: string): Promise<void> {
+    const existing = this.songImageDownloadLocks.get(filename);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const pending = (async () => {
+      const targetPath = path.resolve(process.cwd(), SONG_IMAGE_PATH, filename);
+      try {
+        await access(targetPath);
+        return;
+      } catch {
+        // File does not exist; continue.
+      }
+
+      const response = await fetch(sourceUrl, {
+        method: "GET",
+        headers: {
+          "user-agent": this.userAgent,
+          accept: "image/png,*/*;q=0.8",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`PNG download failed (${response.status}) for ${sourceUrl}`);
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (buffer.length === 0) {
+        throw new Error(`PNG download returned empty body for ${sourceUrl}`);
+      }
+
+      const dir = path.dirname(targetPath);
+      await mkdir(dir, { recursive: true });
+
+      const tempPath = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
+      await writeFile(tempPath, buffer);
+
+      try {
+        await rename(tempPath, targetPath);
+      } catch {
+        await rm(tempPath, { force: true });
+      }
+    })();
+
+    this.songImageDownloadLocks.set(
+      filename,
+      pending.finally(() => {
+        this.songImageDownloadLocks.delete(filename);
+      }),
+    );
+
+    const queued = this.songImageDownloadLocks.get(filename);
+    if (queued) {
+      await queued;
     }
   }
 
@@ -1677,3 +1772,6 @@ export class PiuClient {
   }
 
 }
+
+
+
