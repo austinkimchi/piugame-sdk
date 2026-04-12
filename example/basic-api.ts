@@ -78,15 +78,15 @@ async function main(): Promise<void> {
 
     mark("get-player-data");
     const playerData = await client.getPlayerData(username);
+    console.log("Player:", playerData.gameIdTag ?? playerData.username);
+    console.log("Data:", playerData);
+
     mark("get-recent-plays");
     const recentPlays = await client.getRecentPlays(username);
+    console.log("Recent Plays:", recentPlays);
+
     mark("get-title");
     const titles = await client.getTitle(username);
-    mark("print-result");
-
-    console.log("Player:", playerData.gameIdTag ?? playerData.username);
-    console.log("Rating:", playerData.rating);
-    console.log("Recent Plays:", recentPlays);
     console.log("Titles:", titles);
   } catch (error) {
     if (debug) {
