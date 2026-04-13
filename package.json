@@ -20,7 +20,11 @@
     "test:watch": "vitest",
     "test:integration": "vitest run test/login.integration.test.ts",
     "scrape:png": "node --env-file=.env scripts/scrape-png.js",
-    "scrape:png:dry": "node scripts/scrape-png.js --dry-run"
+    "scrape:png:dry": "node scripts/scrape-png.js --dry-run",
+    "seed:song-catalog": "node --env-file=.env scripts/seed-song-catalog.js",
+    "seed:series-reference": "node --env-file=.env scripts/seed-series-reference.js",
+    "assign:song-series": "node --env-file=.env scripts/assign-song-series.js",
+    "review:song-series-ui": "node --env-file=.env scripts/series-review-ui-server.js"
   },
   "keywords": [
     "piugame",

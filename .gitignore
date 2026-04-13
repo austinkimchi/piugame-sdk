@@ -7,3 +7,4 @@ coverage
 data
 .npmrc
 output_data
+scripts

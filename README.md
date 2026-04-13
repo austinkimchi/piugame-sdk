@@ -49,6 +49,7 @@ console.log(profile.gameIdTag, profile.rating);
 - `PIU_SONG_MAP_AUTO_FETCH=1` (optional): when `PIU_SONG_MAP_ENABLE=1`, auto-download newly discovered song jacket PNGs to `data/song_img/`
 - `PIU_ASSET_MAP_ENABLE=1` (optional): persist global asset maps to `data/avatar-map.json`, `data/grade-map.json`, and `data/plate-map.json`, and auto-recover referenced avatar/grade/plate PNGs under `data/`
   - Grade map stores both normalized code keys (example: `aa_p`) and display alias keys (example: `AA+`)
+- `PIU_MONGO_URI` or `MONGODB_URI` (optional): used by one-time scripts that seed MongoDB data
 - `PIU_TEST_USERNAME`, `PIU_TEST_PASSWORD` (tests/examples)
 - `PIU_TEST_SSO_USERNAME`, `PIU_TEST_SSO_PASSWORD` (optional override if SSO creds differ)
 
@@ -121,6 +122,95 @@ See `example/`:
 - `basic-api.ts`
 - `client-refresh-and-history.ts`
 - `mongo-cache.ts`
+
+## One-Time Song Catalog Seed
+
+Build MongoDB `song_catalog` from `scraped/SONG_LIST_042026.php`:
+
+```bash
+npm run build
+npm run seed:song-catalog
+```
+
+Optional overrides:
+
+- `--input path/to/file.php`
+- `--input path/to/file-a.php --input path/to/file-b.php`
+- `--inputs path/to/file-a.php,path/to/file-b.php`
+- `--db piugame_sdk`
+- `--collection song_catalog`
+- `--mongo-uri mongodb://127.0.0.1:27017`
+- `--allow-skipped-rows`
+- `--dry-run`
+
+Multiple input files are merged into one catalog build before Mongo upsert, so you can combine incomplete snapshots.
+
+## Song Series Labeling Pipeline
+
+Build Namu reference rows and assign series labels to existing `song_catalog` documents.
+
+Series values used in storage:
+
+- `1st`
+- `NX`
+- `FIESTA`
+- `PRIME`
+- `PRIME2`
+- `XX`
+- `PHOENIX`
+
+### 1) Seed reference rows
+
+```bash
+npm run build
+npm run seed:series-reference
+```
+
+Defaults:
+
+- primary input: `scraped/Pump It Up_Songs - NamuWiki.html`
+- secondary input: `scraped/Pump It Up PHOENIX - NamuWiki.html`
+- collection: `piugame_sdk.song_catalog_series_reference`
+
+Options:
+
+- `--primary-input path/to/file.html`
+- `--secondary-input path/to/file.html`
+- `--db piugame_sdk`
+- `--collection song_catalog_series_reference`
+- `--mongo-uri mongodb://127.0.0.1:27017`
+- `--dry-run`
+
+### 2) Assign series labels to catalog
+
+```bash
+npm run assign:song-series
+```
+
+Defaults:
+
+- catalog: `piugame_sdk.song_catalog`
+- references: `piugame_sdk.song_catalog_series_reference`
+- manual overrides: `piugame_sdk.song_catalog_series_overrides`
+- unresolved report file: `output_data/song-series-unresolved.json`
+
+Updated fields on `song_catalog`:
+
+- `series`
+- `seriesSource`
+- `seriesRule`
+- `seriesConfidence`
+- `seriesAssignedAt`
+
+Options:
+
+- `--catalog-collection song_catalog`
+- `--reference-collection song_catalog_series_reference`
+- `--override-collection song_catalog_series_overrides`
+- `--unresolved-output output_data/song-series-unresolved.json`
+- `--refresh-reference` (rebuild references from HTML and upsert before assignment)
+- `--mongo-uri mongodb://127.0.0.1:27017`
+- `--dry-run`
 
 ## Development
 
