@@ -1040,6 +1040,8 @@ export async function upsertSongSeriesReferences(
         $set: {
           ...reference,
           referenceKey,
+        },
+        $setOnInsert: {
           updatedAt,
         },
       },

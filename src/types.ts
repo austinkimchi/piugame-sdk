@@ -1,14 +1,16 @@
-﻿export type EndpointName =
+export type EndpointName =
   | "player_data"
   | "recent_plays"
   | "title"
-  | "best_score_page";
+  | "best_score_page"
+  | "top_plays";
 
 export interface CacheTtlConfig {
   playerDataMs: number;
   recentPlaysMs: number;
   titleMs: number;
   bestScorePageMs: number;
+  topPlaysMs: number;
 }
 
 export interface PiuClientOptions {
@@ -68,6 +70,18 @@ export interface RecentPlay {
   plate: string | null;
   stageBreak: boolean;
   judgments: JudgmentCounts;
+  playedAt: string | null;
+}
+
+export interface TopPlay {
+  rank: number;
+  songName: string;
+  artist: string | null;
+  songImageUrl: string | null;
+  mode: string | null;
+  level: number | null;
+  grade: string | null;
+  score: number | null;
   playedAt: string | null;
 }
 

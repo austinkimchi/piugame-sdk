@@ -9,6 +9,7 @@ import {
   parsePumbilityScore,
   parsePlayerData,
   parseRecentPlays,
+  parseTopPlays,
   parseTitleEntries,
 } from "../src/parsers";
 
@@ -82,6 +83,28 @@ describe("parsers", () => {
     const html = readFixture("pumpbility.php");
     const score = parsePumbilityScore(html);
     expect(score).toBe(9352);
+  });
+
+  test("parseTopPlays extracts pumbility-contributing entries", () => {
+    const html = readFixture("pumbility.php");
+    const plays = parseTopPlays(html);
+
+    expect(plays).toHaveLength(50);
+
+    const first = plays[0];
+    expect(first.rank).toBe(1);
+    expect(first.songName).toBe("Spray");
+    expect(first.artist).toBe("WEi");
+    expect(first.mode).toBe("S");
+    expect(first.level).toBe(15);
+    expect(first.grade).toBe("s");
+    expect(first.score).toBe(300);
+    expect(first.playedAt).toBe("2026-04-13 13:24:55 (GMT+9)");
+
+    const last = plays[49];
+    expect(last.rank).toBe(50);
+    expect(last.songName).toBe("Cleaner");
+    expect(last.score).toBe(160);
   });
 
   test("parseTitleEntries extracts title state and metadata", () => {

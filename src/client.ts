@@ -16,6 +16,7 @@ import {
   parsePumbilityScore,
   parsePlayerData,
   parseRecentPlays,
+  parseTopPlays,
   parseTitleEntries,
 } from "./parsers";
 import { GlobalAssetMapStore, normalizeAssetCode } from "./asset-map";
@@ -33,6 +34,7 @@ import type {
   RecentPlay,
   SerializableCookie,
   StoredSession,
+  TopPlay,
   TransportRequest,
   TransportResponse,
   TitleEntry,
@@ -85,6 +87,7 @@ const DEFAULT_TTL: CacheTtlConfig = {
   recentPlaysMs: 60 * 1000,
   titleMs: 5 * 60 * 1000,
   bestScorePageMs: 5 * 60 * 1000,
+  topPlaysMs: 5 * 60 * 1000,
 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -593,6 +596,23 @@ export class PiuClient {
     await this.updateSongMapFromRecentPlays(plays);
     await this.updateAssetMapFromRecentPlays(plays);
     return plays;
+  }
+
+  public async getTopPlays(username: string): Promise<TopPlay[]> {
+    return this.getCachedParsedEndpoint({
+      username,
+      endpoint: "top_plays",
+      cacheTtlMs: this.cacheTtl.topPlaysMs,
+      loader: async () => {
+        const response = await this.authenticatedRequest(username, {
+          method: "GET",
+          path: "/my_page/pumbility.php",
+          redirect: "manual",
+        });
+
+        return parseTopPlays(response.body);
+      },
+    });
   }
 
   public async getTitle(username: string): Promise<TitleEntry[]> {

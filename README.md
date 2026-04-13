@@ -10,6 +10,7 @@ TypeScript-first Node.js SDK for PIUGAME session auth, SSO handling, and play-da
 - Typed APIs for:
   - player data
   - recent plays
+  - top pumbility-contributing plays
   - titles
   - full best-score history (paged)
 - Optional MongoDB persistence for:
@@ -61,6 +62,7 @@ console.log(profile.gameIdTag, profile.rating);
 - `logout(username)`
 - `getPlayerData(username)`
 - `getRecentPlays(username)`
+- `getTopPlays(username)`
 - `getTitle(username)`
 - `refresh(username)`
 - `fetchAllPlays(username)`
@@ -71,7 +73,7 @@ console.log(profile.gameIdTag, profile.rating);
 
 Also exported for convenience:
 
-- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_title`, `refresh`, `fetch_all_plays`, `set_database`, `set_sso_credentials`
+- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays`, `get_title`, `refresh`, `fetch_all_plays`, `set_database`, `set_sso_credentials`
 
 ## SSO Behavior
 

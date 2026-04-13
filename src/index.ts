@@ -3,6 +3,7 @@ import type {
   FetchAllPlaysResult,
   PlayerData,
   RecentPlay,
+  TopPlay,
   TitleEntry,
 } from "./types";
 
@@ -29,6 +30,7 @@ export type {
   RecentPlay,
   SerializableCookie,
   StoredSession,
+  TopPlay,
   TitleEntry,
   TransportRequest,
   TransportResponse,
@@ -62,6 +64,10 @@ export async function get_player_data(username: string): Promise<PlayerData> {
 
 export async function get_recent_plays(username: string): Promise<RecentPlay[]> {
   return defaultClient.getRecentPlays(username);
+}
+
+export async function get_top_plays(username: string): Promise<TopPlay[]> {
+  return defaultClient.getTopPlays(username);
 }
 
 export async function get_title(username: string): Promise<TitleEntry[]> {

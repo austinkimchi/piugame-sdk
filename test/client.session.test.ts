@@ -129,6 +129,58 @@ describe("PiuClient session manager", () => {
     expect(loginCalls).toBe(1);
   });
 
+  test("getTopPlays returns top 50 pumbility-contributing scores", async () => {
+    const playDataHtml = readFixture("play_data.php");
+    const pumbilityHtml = readFixture("pumbility.php");
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, playDataHtml, {});
+      }
+
+      if (url.pathname === "/my_page/pumbility.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, pumbilityHtml, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+
+    await client.login("fixture_user", "fixture_password");
+    const topPlays = await client.getTopPlays("fixture_user");
+
+    expect(topPlays).toHaveLength(50);
+    expect(topPlays[0]?.rank).toBe(1);
+    expect(topPlays[0]?.songName).toBe("Spray");
+    expect(topPlays[0]?.score).toBe(300);
+    expect(topPlays[49]?.rank).toBe(50);
+  });
+
   test("expired session triggers automatic relogin", async () => {
     const playDataHtml = readFixture("play_data.php");
     let loginCalls = 0;

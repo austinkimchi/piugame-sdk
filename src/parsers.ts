@@ -7,6 +7,7 @@ import type {
   JudgmentCounts,
   PlayerData,
   RecentPlay,
+  TopPlay,
   TitleEntry,
 } from "./types";
 
@@ -53,6 +54,19 @@ function parseAssetCode(src: string | undefined, assetFolder: "grade" | "plate")
 
   const regex = new RegExp(`/${assetFolder}/([^/]+)\\.[a-zA-Z]+(?:[?#].*)?$`, "i");
   const match = regex.exec(src);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].toLowerCase();
+}
+
+function parseFileBasenameCode(src: string | undefined): string | null {
+  if (!src) {
+    return null;
+  }
+
+  const match = /(?:^|\/)([^/?#]+)\.[a-zA-Z]+(?:[?#].*)?$/i.exec(src);
   if (!match) {
     return null;
   }
@@ -201,6 +215,41 @@ export function parsePumbilityScore(html: string): number | null {
   return parseNumber(
     $(".pumbility_total_wrap .inn .t2, .pumbility_total_wrap .in_bg1 .t2").first().text(),
   );
+}
+
+export function parseTopPlays(html: string): TopPlay[] {
+  const $ = load(html);
+  const scopedEntries = $(".rating_rangking_list_w.pumblitiySt .list > li");
+  const entries = scopedEntries.length > 0 ? scopedEntries : $(".rating_rangking_list_w .list > li");
+  const plays: TopPlay[] = [];
+
+  entries.each((_, entry) => {
+    const root = $(entry);
+    const songName = cleanText(root.find(".profile_name .t1").first().text());
+
+    if (!songName) {
+      return;
+    }
+
+    const rank = parseNumber(root.find(".num .img_wrap .num .tt").first().text()) ?? plays.length + 1;
+    const localRoot = load(root.html() ?? "");
+    const { mode, level } = parseStepBallFromElement(localRoot, ".stepBall_in");
+    const gradeSrc = root.find(".grade_wrap img").first().attr("src");
+
+    plays.push({
+      rank,
+      songName,
+      artist: cleanText(root.find(".profile_name .t2").first().text()) || null,
+      songImageUrl: parseBackgroundImageUrl(root.find(".profile_img .re").first().attr("style")),
+      mode,
+      level,
+      grade: parseAssetCode(gradeSrc, "grade") ?? parseFileBasenameCode(gradeSrc),
+      score: parseNumber(root.find(".score .tt").first().text()),
+      playedAt: cleanText(root.find(".date .tt").first().text()) || null,
+    });
+  });
+
+  return plays;
 }
 
 function createEmptyJudgments(): JudgmentCounts {
