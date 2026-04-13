@@ -1,7 +1,7 @@
 {
   "name": "@austinkimchi/piugame-sdk",
-  "version": "0.5.2",
-  "description": "TypeScript-first Node.js SDK for PIUGAME session auth and play-data scraping.",
+  "version": "0.5.3",
+  "description": "Pump It Up PHOENIX (ANDAMIRO) TypeScript SDK. Supports session auth and play-data scraping.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
