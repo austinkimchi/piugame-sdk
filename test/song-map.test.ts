@@ -180,17 +180,19 @@ describe("song map module", () => {
 });
 
 describe("song map client integration", () => {
-  test("enabled flag ensures missing song jackets and does not write song-map.json", async () => {
+  test("split song asset flag ensures missing song jackets and does not write song-map.json", async () => {
     const playDataHtml = PLAY_DATA_HTML;
     const recentPlayedHtml = RECENT_PLAYS_HTML;
     const originalCwd = process.cwd();
+    const originalSplitFlag = process.env.PIU_SONG_ASSET_ENABLE;
     const originalFlag = process.env.PIU_SONG_MAP_ENABLE;
     const originalAutoFetchFlag = process.env.PIU_SONG_MAP_AUTO_FETCH;
     const tempDir = await mkdtemp(resolve(tmpdir(), "piu-song-map-client-enabled-"));
 
     try {
       process.chdir(tempDir);
-      process.env.PIU_SONG_MAP_ENABLE = "1";
+      process.env.PIU_SONG_ASSET_ENABLE = "1";
+      delete process.env.PIU_SONG_MAP_ENABLE;
       delete process.env.PIU_SONG_MAP_AUTO_FETCH;
 
       let recentCalls = 0;
@@ -237,6 +239,11 @@ describe("song map client integration", () => {
       await expect(stat(resolve(tempDir, "data", "song-map.json"))).rejects.toBeTruthy();
     } finally {
       process.chdir(originalCwd);
+      if (originalSplitFlag === undefined) {
+        delete process.env.PIU_SONG_ASSET_ENABLE;
+      } else {
+        process.env.PIU_SONG_ASSET_ENABLE = originalSplitFlag;
+      }
       if (originalFlag === undefined) {
         delete process.env.PIU_SONG_MAP_ENABLE;
       } else {
@@ -255,12 +262,14 @@ describe("song map client integration", () => {
     const playDataHtml = PLAY_DATA_HTML;
     const recentPlayedHtml = RECENT_PLAYS_HTML;
     const originalCwd = process.cwd();
+    const originalSplitFlag = process.env.PIU_SONG_ASSET_ENABLE;
     const originalFlag = process.env.PIU_SONG_MAP_ENABLE;
     const originalAutoFetchFlag = process.env.PIU_SONG_MAP_AUTO_FETCH;
     const tempDir = await mkdtemp(resolve(tmpdir(), "piu-song-map-auto-fetch-"));
 
     try {
       process.chdir(tempDir);
+      delete process.env.PIU_SONG_ASSET_ENABLE;
       delete process.env.PIU_SONG_MAP_ENABLE;
       process.env.PIU_SONG_MAP_AUTO_FETCH = "1";
 
@@ -307,6 +316,11 @@ describe("song map client integration", () => {
       await expect(stat(resolve(tempDir, "data", "song-map.json"))).rejects.toBeTruthy();
     } finally {
       process.chdir(originalCwd);
+      if (originalSplitFlag === undefined) {
+        delete process.env.PIU_SONG_ASSET_ENABLE;
+      } else {
+        process.env.PIU_SONG_ASSET_ENABLE = originalSplitFlag;
+      }
       if (originalFlag === undefined) {
         delete process.env.PIU_SONG_MAP_ENABLE;
       } else {
@@ -325,12 +339,14 @@ describe("song map client integration", () => {
     const playDataHtml = PLAY_DATA_HTML;
     const recentPlayedHtml = RECENT_PLAYS_HTML;
     const originalCwd = process.cwd();
+    const originalSplitFlag = process.env.PIU_SONG_ASSET_ENABLE;
     const originalFlag = process.env.PIU_SONG_MAP_ENABLE;
     const originalAutoFetchFlag = process.env.PIU_SONG_MAP_AUTO_FETCH;
     const tempDir = await mkdtemp(resolve(tmpdir(), "piu-song-map-client-disabled-"));
 
     try {
       process.chdir(tempDir);
+      delete process.env.PIU_SONG_ASSET_ENABLE;
       delete process.env.PIU_SONG_MAP_ENABLE;
       delete process.env.PIU_SONG_MAP_AUTO_FETCH;
 
@@ -372,6 +388,11 @@ describe("song map client integration", () => {
       await expect(stat(resolve(tempDir, "data", "song-map.json"))).rejects.toBeTruthy();
     } finally {
       process.chdir(originalCwd);
+      if (originalSplitFlag === undefined) {
+        delete process.env.PIU_SONG_ASSET_ENABLE;
+      } else {
+        process.env.PIU_SONG_ASSET_ENABLE = originalSplitFlag;
+      }
       if (originalFlag === undefined) {
         delete process.env.PIU_SONG_MAP_ENABLE;
       } else {

@@ -46,9 +46,11 @@ console.log(profile.gameIdTag, profile.rating);
 
 - `PIU_INSECURE_TLS=1` (optional): disable TLS cert verification globally in SDK defaults
 - `PIU_TLS_FALLBACK_INSECURE=1` (optional): allow TLS fallback retry when cert validation fails
-- `PIU_SONG_MAP_ENABLE=1` (optional): ensure song jacket PNGs referenced by recent plays exist under `data/song_img/` (download only when missing)
-- `PIU_SONG_MAP_AUTO_FETCH=1` (optional): backward-compatible alias for song-jacket ensure mode
-- `PIU_ASSET_MAP_ENABLE=1` (optional): ensure avatar/grade/plate PNG assets referenced by API responses exist under `data/` (download only when missing)
+- `PIU_SONG_ASSET_ENABLE=1` (optional): ensure song jacket PNGs referenced by recent plays exist under `data/song_img/` (download only when missing)
+- `PIU_PROFILE_ASSET_ENABLE=1` (optional): ensure profile avatar PNGs referenced by player-data responses exist under `data/avatar_img/`
+- `PIU_GRADE_PLATE_ASSET_ENABLE=1` (optional): ensure grade/plate PNGs referenced by recent and best-play responses exist under `data/l_img/`
+- `PIU_SONG_MAP_ENABLE=1`, `PIU_SONG_MAP_AUTO_FETCH=1` (optional): backward-compatible aliases for song-jacket ensure mode
+- `PIU_ASSET_MAP_ENABLE=1` (optional): backward-compatible aggregate fallback for profile avatar plus grade/plate asset ensure mode; explicit split flags above override it
 - `PIU_MONGO_URI` or `MONGODB_URI` (optional): used by one-time scripts that seed MongoDB data
 - `PIU_TEST_USERNAME`, `PIU_TEST_PASSWORD` (tests/examples)
 

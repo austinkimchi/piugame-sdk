@@ -115,6 +115,9 @@ const DEFAULT_REDIRECT_LIMIT = 5;
 const DEFAULT_SSO_TIMEOUT_MS = 60_000;
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
 const TLS_FALLBACK_ENV_KEY = "PIU_TLS_FALLBACK_INSECURE";
+const SONG_ASSET_ENABLE_ENV_KEY = "PIU_SONG_ASSET_ENABLE";
+const PROFILE_ASSET_ENABLE_ENV_KEY = "PIU_PROFILE_ASSET_ENABLE";
+const GRADE_PLATE_ASSET_ENABLE_ENV_KEY = "PIU_GRADE_PLATE_ASSET_ENABLE";
 const SONG_MAP_ENABLE_ENV_KEY = "PIU_SONG_MAP_ENABLE";
 const SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY = "PIU_SONG_MAP_AUTO_FETCH";
 const ASSET_MAP_ENABLE_ENV_KEY = "PIU_ASSET_MAP_ENABLE";
@@ -179,6 +182,17 @@ function parseBooleanEnv(value: string | undefined): boolean | null {
 
   if (["0", "false", "no", "off"].includes(normalized)) {
     return false;
+  }
+
+  return null;
+}
+
+function parseBooleanEnvFromKeys(...keys: string[]): boolean | null {
+  for (const key of keys) {
+    const parsed = parseBooleanEnv(process.env[key]);
+    if (parsed !== null) {
+      return parsed;
+    }
   }
 
   return null;
@@ -477,8 +491,9 @@ export class PiuClient {
   private readonly ssoAutoResolve: boolean;
   private readonly ssoHeadless: boolean;
   private readonly ssoTimeoutMs: number;
-  private readonly songMapEnabled: boolean;
-  private readonly assetMapEnabled: boolean;
+  private readonly songAssetEnabled: boolean;
+  private readonly profileAssetEnabled: boolean;
+  private readonly gradePlateAssetEnabled: boolean;
 
   private readonly sessions = new Map<string, SessionState>();
   private readonly credentials = new Map<string, Credentials>();
@@ -507,11 +522,16 @@ export class PiuClient {
     this.ssoAutoResolve = options.ssoAutoResolve ?? true;
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
-    const songMapEnabledFromEnv = parseBooleanEnv(process.env[SONG_MAP_ENABLE_ENV_KEY]) ?? false;
-    const songMapAutoFetchEnabledFromEnv =
-      parseBooleanEnv(process.env[SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY]) ?? false;
-    this.songMapEnabled = songMapEnabledFromEnv || songMapAutoFetchEnabledFromEnv;
-    this.assetMapEnabled = parseBooleanEnv(process.env[ASSET_MAP_ENABLE_ENV_KEY]) ?? false;
+    this.songAssetEnabled =
+      parseBooleanEnvFromKeys(
+        SONG_ASSET_ENABLE_ENV_KEY,
+        SONG_MAP_ENABLE_ENV_KEY,
+        SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY,
+      ) ?? false;
+    this.profileAssetEnabled =
+      parseBooleanEnvFromKeys(PROFILE_ASSET_ENABLE_ENV_KEY, ASSET_MAP_ENABLE_ENV_KEY) ?? false;
+    this.gradePlateAssetEnabled =
+      parseBooleanEnvFromKeys(GRADE_PLATE_ASSET_ENABLE_ENV_KEY, ASSET_MAP_ENABLE_ENV_KEY) ?? false;
     this.transport =
       options.transport ??
       createDefaultTransport(this.timeoutMs, rejectUnauthorized, allowInsecureTlsFallback);
@@ -885,7 +905,7 @@ export class PiuClient {
   }
 
   private async ensureSongImagesFromRecentPlays(plays: RecentPlay[]): Promise<void> {
-    if (!this.songMapEnabled || plays.length === 0) {
+    if (!this.songAssetEnabled || plays.length === 0) {
       return;
     }
 
@@ -960,7 +980,7 @@ export class PiuClient {
   }
 
   private async ensureAssetsFromPlayerData(profile: PlayerData): Promise<void> {
-    if (!this.assetMapEnabled) {
+    if (!this.profileAssetEnabled) {
       return;
     }
 
@@ -974,7 +994,7 @@ export class PiuClient {
   }
 
   private async ensureAssetsFromRecentPlays(plays: RecentPlay[]): Promise<void> {
-    if (!this.assetMapEnabled || plays.length === 0) {
+    if (!this.gradePlateAssetEnabled || plays.length === 0) {
       return;
     }
 
@@ -1005,7 +1025,7 @@ export class PiuClient {
   }
 
   private async ensureAssetsFromBestPlays(plays: BestPlay[]): Promise<void> {
-    if (!this.assetMapEnabled || plays.length === 0) {
+    if (!this.gradePlateAssetEnabled || plays.length === 0) {
       return;
     }
 

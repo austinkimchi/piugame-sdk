@@ -1,6 +1,6 @@
 {
   "name": "@austinkimchi/piugame-sdk",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Pump It Up PHOENIX (ANDAMIRO) TypeScript SDK. Supports session auth and play-data scraping.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

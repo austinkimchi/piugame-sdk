@@ -131,6 +131,29 @@ function createTransport(counters: { recentCalls: number }): HttpTransport {
   };
 }
 
+const SPLIT_ASSET_ENV_KEYS = [
+  "PIU_ASSET_MAP_ENABLE",
+  "PIU_PROFILE_ASSET_ENABLE",
+  "PIU_GRADE_PLATE_ASSET_ENABLE",
+  "PIU_SONG_ASSET_ENABLE",
+  "PIU_SONG_MAP_ENABLE",
+  "PIU_SONG_MAP_AUTO_FETCH",
+] as const;
+
+function snapshotEnv(keys: readonly string[]): Map<string, string | undefined> {
+  return new Map(keys.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot: Map<string, string | undefined>): void {
+  for (const [key, value] of snapshot.entries()) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+}
+
 describe("asset jacket ensure mode", () => {
   test("enabled flag downloads avatar/grade/plate assets and does not write map JSON", async () => {
     const originalCwd = process.cwd();
@@ -314,6 +337,83 @@ describe("asset jacket ensure mode", () => {
       } else {
         process.env.PIU_ASSET_MAP_ENABLE = originalAssetFlag;
       }
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("split flags can enable profile avatar while disabling song and grade/plate assets", async () => {
+    const originalCwd = process.cwd();
+    const originalEnv = snapshotEnv(SPLIT_ASSET_ENV_KEYS);
+    const tempDir = await mkdtemp(resolve(tmpdir(), "piu-asset-split-profile-only-"));
+
+    try {
+      process.chdir(tempDir);
+      delete process.env.PIU_ASSET_MAP_ENABLE;
+      process.env.PIU_PROFILE_ASSET_ENABLE = "1";
+      process.env.PIU_GRADE_PLATE_ASSET_ENABLE = "0";
+      process.env.PIU_SONG_ASSET_ENABLE = "0";
+      delete process.env.PIU_SONG_MAP_ENABLE;
+      delete process.env.PIU_SONG_MAP_AUTO_FETCH;
+
+      const counters = { recentCalls: 0 };
+      const client = new PiuClient({ transport: createTransport(counters) });
+      let downloadCalls = 0;
+      (client as any).requestBinary = async () => {
+        downloadCalls += 1;
+        return Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+      };
+
+      await client.login("user_a", "password_a");
+      await client.getPlayerData("user_a");
+      await client.getRecentPlays("user_a");
+      await client.fetchAllPlays("user_a");
+
+      expect(downloadCalls).toBe(1);
+      await stat(resolve(tempDir, "data", "avatar_img", "avatar_a.png"));
+      await expect(stat(resolve(tempDir, "data", "song_img", "song1.png"))).rejects.toBeTruthy();
+      await expect(stat(resolve(tempDir, "data", "l_img", "grade", "aa_p.png"))).rejects.toBeTruthy();
+      await expect(stat(resolve(tempDir, "data", "l_img", "grade", "aa.png"))).rejects.toBeTruthy();
+      await expect(stat(resolve(tempDir, "data", "l_img", "plate", "fg.png"))).rejects.toBeTruthy();
+      await expect(stat(resolve(tempDir, "data", "l_img", "plate", "tg.png"))).rejects.toBeTruthy();
+    } finally {
+      process.chdir(originalCwd);
+      restoreEnv(originalEnv);
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("split grade/plate flag overrides legacy aggregate asset flag", async () => {
+    const originalCwd = process.cwd();
+    const originalEnv = snapshotEnv(SPLIT_ASSET_ENV_KEYS);
+    const tempDir = await mkdtemp(resolve(tmpdir(), "piu-asset-split-override-"));
+
+    try {
+      process.chdir(tempDir);
+      process.env.PIU_ASSET_MAP_ENABLE = "1";
+      process.env.PIU_PROFILE_ASSET_ENABLE = "1";
+      process.env.PIU_GRADE_PLATE_ASSET_ENABLE = "0";
+      process.env.PIU_SONG_ASSET_ENABLE = "0";
+      delete process.env.PIU_SONG_MAP_ENABLE;
+      delete process.env.PIU_SONG_MAP_AUTO_FETCH;
+
+      const client = new PiuClient({ transport: createTransport({ recentCalls: 0 }) });
+      const downloadedUrls: string[] = [];
+      (client as any).requestBinary = async (urlText: string) => {
+        downloadedUrls.push(urlText);
+        return Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+      };
+
+      await client.login("user_a", "password_a");
+      await client.getPlayerData("user_a");
+      await client.getRecentPlays("user_a");
+
+      expect(downloadedUrls.some((urlText) => /\/data\/avatar_img\/avatar_a\.png$/i.test(urlText))).toBe(true);
+      expect(downloadedUrls.some((urlText) => /\/l_img\/grade\//i.test(urlText))).toBe(false);
+      expect(downloadedUrls.some((urlText) => /\/l_img\/plate\//i.test(urlText))).toBe(false);
+      expect(downloadedUrls.some((urlText) => /\/data\/song_img\//i.test(urlText))).toBe(false);
+    } finally {
+      process.chdir(originalCwd);
+      restoreEnv(originalEnv);
       await rm(tempDir, { recursive: true, force: true });
     }
   });
