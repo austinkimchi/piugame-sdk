@@ -1,6 +1,4 @@
-﻿import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, test, expect } from "vitest";
+﻿import { describe, test, expect } from "vitest";
 
 import { PiuClient } from "../src/client";
 import {
@@ -11,9 +9,78 @@ import {
 } from "../src/errors";
 import type { HttpTransport, TransportRequest, TransportResponse } from "../src/types";
 
-function readFixture(fileName: string): string {
-  return readFileSync(resolve(process.cwd(), "scraped", fileName), "utf8");
-}
+const PLAY_DATA_HTML = `
+<div class="subProfile_wrap">
+  <div class="in_profile">
+    <div class="profile_name">
+      <div class="name_w">
+        <span class="t1">CONRAD FOLLOWER</span>
+        <span class="t2">PKIMCHI#7501</span>
+      </div>
+    </div>
+    <div class="profile_img">
+      <div class="re" style="background-image:url('https://www.piugame.com/data/avatar_img/avatar_a.png')"></div>
+    </div>
+    <div class="profile_etc"><span class="tt">1,034</span></div>
+    <ul class="time_w">
+      <li><span class="tt">last access date : 2026-04-11 12:37:31</span></li>
+      <li><span class="tt">recently access games : ROUND1 SLM 2</span></li>
+    </ul>
+  </div>
+</div>
+<div class="board_search"><div class="total"><span class="t2">215</span></div></div>
+<div class="play_data_wrap">
+  <div class="my_w"><span class="num">18318</span></div>
+  <div class="clear_w">
+    <div class="l_con"><span class="t1">125 / 3,646</span></div>
+    <div class="graph"><span class="num">3%</span></div>
+  </div>
+  <div class="plate_w">
+    <ul class="list">
+      <li><a data-type="fg"></a><span class="t_num">40</span></li>
+    </ul>
+  </div>
+</div>
+`;
+
+const PUMBILITY_SCORE_HTML = `
+<div class="pumbility_total_wrap">
+  <div class="inn">
+    <div class="t1">Pumbility</div>
+    <div class="t2">9,352</div>
+  </div>
+</div>
+`;
+
+const PUMBILITY_TOP_HTML = `
+<div class="rating_rangking_list_w pumblitiySt">
+  <ul class="list">
+    ${Array.from({ length: 50 }, (_, index) => {
+      const rank = index + 1;
+      const songName =
+        rank === 1 ? "Spray" : rank === 50 ? "Cleaner" : `Song ${rank}`;
+      const score = rank === 1 ? 300 : rank === 50 ? 160 : 200 - rank;
+      return `
+      <li>
+        <div class="num"><div class="img_wrap"><div class="num"><span class="tt">${rank}</span></div></div></div>
+        <div class="profile_img"><div class="re" style="background-image:url('https://www.piugame.com/data/song_img/${rank}.png')"></div></div>
+        <div class="profile_name"><span class="t1">${songName}</span><span class="t2">WEi</span></div>
+        <div class="stepBall_in">
+          <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+          <div class="numw">
+            <img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png" />
+            <img src="https://www.piugame.com/l_img/stepball/full/s_num_5.png" />
+          </div>
+        </div>
+        <div class="grade_wrap"><img src="https://www.piugame.com/l_img/grade/s.png" /></div>
+        <div class="score"><span class="tt">${score}</span></div>
+        <div class="date"><span class="tt">2026-04-13 13:24:55 (GMT+9)</span></div>
+      </li>
+      `;
+    }).join("")}
+  </ul>
+</div>
+`;
 
 function response(
   status: number,
@@ -76,10 +143,36 @@ class MockSsoClient extends PiuClient {
   }
 }
 
+class SsoReadinessClient extends PiuClient {
+  public async waitForReadiness(
+    context: any,
+    page: any,
+    submitted: boolean,
+  ): Promise<unknown[]> {
+    return this.waitForSsoSessionReadiness(context, page, submitted);
+  }
+
+  public async waitForEntry(context: any, page: any): Promise<void> {
+    await this.waitForSsoEntryReadiness(context, page);
+  }
+}
+
+function browserSessionCookie(): unknown {
+  return {
+    name: "sid",
+    value: "mocksid",
+    domain: ".piugame.com",
+    path: "/",
+    expires: Math.floor(Date.now() / 1000) + 3600,
+    secure: false,
+    httpOnly: true,
+  };
+}
+
 describe("PiuClient session manager", () => {
   test("valid session path keeps login count stable", async () => {
-    const playDataHtml = readFixture("play_data.php");
-    const pumbilityHtml = readFixture("pumpbility.php");
+    const playDataHtml = PLAY_DATA_HTML;
+    const pumbilityHtml = PUMBILITY_SCORE_HTML;
     let loginCalls = 0;
 
     const transport: HttpTransport = async (request) => {
@@ -129,9 +222,126 @@ describe("PiuClient session manager", () => {
     expect(loginCalls).toBe(1);
   });
 
+  test("recently validated session skips extra probe on repeated getPlayerData", async () => {
+    const playDataHtml = PLAY_DATA_HTML;
+    const pumbilityHtml = PUMBILITY_SCORE_HTML;
+    let loginCalls = 0;
+    let playDataCalls = 0;
+    let pumbilityCalls = 0;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        loginCalls += 1;
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        playDataCalls += 1;
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, playDataHtml, {});
+      }
+
+      if (url.pathname === "/my_page/pumbility.php") {
+        pumbilityCalls += 1;
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, pumbilityHtml, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({
+      transport,
+      cacheTtl: { playerDataMs: 1 },
+    });
+
+    await client.login("fixture_user", "fixture_password");
+
+    playDataCalls = 0;
+    pumbilityCalls = 0;
+
+    await client.getPlayerData("fixture_user");
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+    await client.getPlayerData("fixture_user");
+
+    expect(loginCalls).toBe(1);
+    expect(playDataCalls).toBe(2);
+    expect(pumbilityCalls).toBe(2);
+  });
+
+  test("cooldown expiry resumes session probe before getter request", async () => {
+    const playDataHtml = PLAY_DATA_HTML;
+    const pumbilityHtml = PUMBILITY_SCORE_HTML;
+    let playDataCalls = 0;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        playDataCalls += 1;
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, playDataHtml, {});
+      }
+
+      if (url.pathname === "/my_page/pumbility.php") {
+        return response(200, pumbilityHtml, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({
+      transport,
+      cacheTtl: { playerDataMs: 1 },
+    });
+
+    await client.login("fixture_user", "fixture_password");
+    playDataCalls = 0;
+
+    const session = (client as any).sessions.get("fixture_user");
+    session.lastValidatedAt = Date.now() - 61_000;
+
+    await client.getPlayerData("fixture_user");
+
+    expect(playDataCalls).toBe(2);
+  });
+
   test("getTopPlays returns top 50 pumbility-contributing scores", async () => {
-    const playDataHtml = readFixture("play_data.php");
-    const pumbilityHtml = readFixture("pumbility.php");
+    const playDataHtml = PLAY_DATA_HTML;
+    const pumbilityHtml = PUMBILITY_TOP_HTML;
 
     const transport: HttpTransport = async (request) => {
       const url = new URL(request.url);
@@ -182,7 +392,7 @@ describe("PiuClient session manager", () => {
   });
 
   test("expired session triggers automatic relogin", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
     let loginCalls = 0;
 
     const transport: HttpTransport = async (request) => {
@@ -255,7 +465,7 @@ describe("PiuClient session manager", () => {
   });
 
   test("concurrent getter calls dedupe relogin with per-user lock", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
     let loginCalls = 0;
 
     const transport: HttpTransport = async (request) => {
@@ -350,7 +560,7 @@ describe("PiuClient session manager", () => {
   });
 
   test("SSO redirect triggers resolver once and then succeeds", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
     let loginCalls = 0;
 
     const transport: HttpTransport = async (request) => {
@@ -400,7 +610,7 @@ describe("PiuClient session manager", () => {
 
     expect(data.username).toBe("fixture_user");
     expect(client.resolverCallCount).toBe(1);
-    expect(loginCalls).toBe(2);
+    expect(loginCalls).toBe(1);
   });
 
   test("resolver failure returns SSOAutomationError", async () => {
@@ -452,8 +662,74 @@ describe("PiuClient session manager", () => {
     expect(client.resolverCallCount).toBe(1);
   });
 
+  test("SSO readiness resolves from PIUGAME cookies without page-load waits", async () => {
+    let cookieReads = 0;
+    let pollCalls = 0;
+    let pageUrl = "https://api.am-pass.net/sso";
+    const client = new SsoReadinessClient({ ssoTimeoutMs: 500 });
+    const context = {
+      cookies: async () => {
+        cookieReads += 1;
+        return cookieReads >= 2 ? [browserSessionCookie()] : [];
+      },
+    };
+    const page = {
+      url: () => pageUrl,
+      waitForLoadState: async () => {
+        throw new Error("waitForLoadState should not be used for SSO readiness.");
+      },
+      waitForTimeout: async () => {
+        pollCalls += 1;
+        pageUrl = "https://www.piugame.com/";
+      },
+      locator: (selector: string) => ({
+        count: async () => (selector === ".profile_name" && pageUrl === "https://www.piugame.com/" ? 1 : 0),
+      }),
+    };
+
+    const cookies = await client.waitForReadiness(context, page, true);
+
+    expect(cookies).toHaveLength(1);
+    expect(cookieReads).toBe(2);
+    expect(pollCalls).toBe(1);
+  });
+
+  test("SSO readiness timeout remains an automation error when cookies never arrive", async () => {
+    const client = new SsoReadinessClient({ ssoTimeoutMs: 5 });
+    const context = {
+      cookies: async () => [],
+    };
+    const page = {
+      url: () => "https://api.am-pass.net/sso",
+      waitForTimeout: async (timeoutMs: number) => {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, timeoutMs));
+      },
+    };
+
+    await expect(client.waitForReadiness(context, page, false)).rejects.toBeInstanceOf(
+      SSOAutomationError,
+    );
+  });
+
+  test("SSO readiness maps post-submit login page to AuthenticationError", async () => {
+    const client = new SsoReadinessClient({ ssoTimeoutMs: 500 });
+    const context = {
+      cookies: async () => [],
+    };
+    const page = {
+      url: () => "https://www.piugame.com/bbs/login.php",
+      waitForTimeout: async () => {
+        throw new Error("login rejection should resolve before polling.");
+      },
+    };
+
+    await expect(client.waitForReadiness(context, page, true)).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
+  });
+
   test("non-SSO path does not invoke resolver", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
 
     const transport: HttpTransport = async (request) => {
       const url = new URL(request.url);
@@ -484,7 +760,7 @@ describe("PiuClient session manager", () => {
   });
 
   test("concurrent reauth triggers resolver once under lock", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
     let loginCalls = 0;
 
     const transport: HttpTransport = async (request) => {
@@ -543,11 +819,11 @@ describe("PiuClient session manager", () => {
     expect(left.username).toBe("fixture_user");
     expect(right.username).toBe("fixture_user");
     expect(client.resolverCallCount).toBe(1);
-    expect(loginCalls).toBe(3);
+    expect(loginCalls).toBe(2);
   });
 
   test("fetch_all_plays iterates pages until detected last page", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
 
     const bestScorePageHtml = (
       songName: string,
@@ -636,7 +912,7 @@ describe("PiuClient session manager", () => {
   });
 
   test("multi-user sessions stay isolated under concurrent access", async () => {
-    const playDataHtml = readFixture("play_data.php");
+    const playDataHtml = PLAY_DATA_HTML;
     const seenPlayDataCookies: string[] = [];
 
     const transport: HttpTransport = async (request) => {

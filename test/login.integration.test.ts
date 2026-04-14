@@ -1,4 +1,4 @@
-﻿import { describe, test, expect } from "vitest";
+﻿import { beforeAll, describe, test, expect } from "vitest";
 
 import "dotenv/config";
 
@@ -11,8 +11,6 @@ import {
 
 const username = process.env.PIU_TEST_USERNAME;
 const password = process.env.PIU_TEST_PASSWORD;
-const ssoUsername = process.env.PIU_TEST_SSO_USERNAME;
-const ssoPassword = process.env.PIU_TEST_SSO_PASSWORD;
 
 function parseBool(value: string | undefined): boolean | null {
   if (!value) {
@@ -32,18 +30,12 @@ function parseBool(value: string | undefined): boolean | null {
 }
 
 const insecureTlsOverride = parseBool(process.env.PIU_TEST_INSECURE_TLS);
+const preloadPlaywright = parseBool(process.env.PIU_TEST_PRELOAD_PLAYWRIGHT) ?? true;
 
 function createClient(): PiuClient {
-  const client =
-    insecureTlsOverride === null
-      ? new PiuClient()
-      : new PiuClient({ rejectUnauthorized: !insecureTlsOverride });
-
-  if (username && ssoUsername && ssoPassword) {
-    client.setSsoCredentials(username, ssoUsername, ssoPassword);
-  }
-
-  return client;
+  return insecureTlsOverride === null
+    ? new PiuClient()
+    : new PiuClient({ rejectUnauthorized: !insecureTlsOverride });
 }
 
 const describeIntegration = username && password ? describe : describe.skip;
@@ -57,6 +49,31 @@ function assertSsoAutomationFailure(error: unknown): void {
 }
 
 describeIntegration("integration login (.env)", () => {
+  beforeAll(
+    async () => {
+      if (!preloadPlaywright) {
+        return;
+      }
+
+      try {
+        const playwrightModule = await import("playwright");
+        const candidate = (playwrightModule as { chromium?: unknown }).chromium;
+        if (!candidate || typeof candidate !== "object" || !("launch" in candidate)) {
+          return;
+        }
+
+        const chromium = candidate as { launch: (options: { headless: boolean }) => Promise<any> };
+        const browser = await chromium.launch({ headless: true });
+        const context = await browser.newContext();
+        await context.close();
+        await browser.close();
+      } catch {
+        // Best-effort warmup only. Login path already handles missing playwright/binaries via typed errors.
+      }
+    },
+    120_000,
+  );
+
   test(
     "login succeeds and allows get_player_data",
     async () => {

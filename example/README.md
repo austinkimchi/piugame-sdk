@@ -14,8 +14,6 @@ Set these variables in `.env`:
 
 - `PIU_TEST_USERNAME`
 - `PIU_TEST_PASSWORD`
-- `PIU_TEST_SSO_USERNAME` (optional)
-- `PIU_TEST_SSO_PASSWORD` (optional)
 - `PIU_INSECURE_TLS` (optional, `1` only if your environment cannot validate PIUGAME TLS cert chain)
 - `PIU_MONGO_URI` (only for `mongo-cache.ts`)
 

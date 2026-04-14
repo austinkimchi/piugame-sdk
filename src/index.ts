@@ -46,14 +46,6 @@ export async function login(username: string, password: string): Promise<void> {
   await defaultClient.login(username, password);
 }
 
-export function set_sso_credentials(
-  username: string,
-  ssoUsername: string,
-  ssoPassword: string,
-): void {
-  defaultClient.setSsoCredentials(username, ssoUsername, ssoPassword);
-}
-
 export async function logout(username: string): Promise<void> {
   await defaultClient.logout(username);
 }

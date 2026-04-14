@@ -1,5 +1,3 @@
-﻿import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, test, expect } from "vitest";
 
 import {
@@ -13,14 +11,174 @@ import {
   parseTitleEntries,
 } from "../src/parsers";
 
-function readFixture(fileName: string): string {
-  return readFileSync(resolve(process.cwd(), "scraped", fileName), "utf8");
-}
+const PLAY_DATA_HTML = `
+<div class="subProfile_wrap">
+  <div class="in_profile">
+    <div class="profile_name">
+      <div class="name_w">
+        <span class="t1">CONRAD FOLLOWER</span>
+        <span class="t2">PKIMCHI#7501</span>
+      </div>
+    </div>
+    <div class="profile_img">
+      <div class="re" style="background-image:url('https://www.piugame.com/data/avatar_img/abc.png')"></div>
+    </div>
+    <div class="profile_etc"><span class="tt">1,034</span></div>
+    <ul class="time_w">
+      <li><span class="tt">last access date : 2026-04-11 12:37:31</span></li>
+      <li><span class="tt">recently access games : ROUND1 SLM 2</span></li>
+    </ul>
+  </div>
+</div>
+<div class="board_search"><div class="total"><span class="t2">215</span></div></div>
+<div class="play_data_wrap">
+  <div class="my_w"><span class="num">18318</span></div>
+  <div class="clear_w">
+    <div class="l_con"><span class="t1">125 / 3,646</span></div>
+    <div class="graph"><span class="num">3%</span></div>
+  </div>
+  <div class="plate_w">
+    <ul class="list">
+      <li><a data-type="ug"></a><span class="t_num">1</span></li>
+      <li><a data-type="sg"></a><span class="t_num">1</span></li>
+      <li><a data-type="mg"></a><span class="t_num">39</span></li>
+      <li><a data-type="tg"></a><span class="t_num">44</span></li>
+      <li><a data-type="fg"></a><span class="t_num">40</span></li>
+    </ul>
+  </div>
+</div>
+`;
+
+const RECENT_PLAYED_HTML = `
+<ul class="recently_playeList">
+  <li>
+    <div class="wrap_in"><div class="in" style="background-image:url('https://www.piugame.com/data/song_img/a.png')"></div></div>
+    <div class="song_name"><p>Clematis Rapsodia</p></div>
+    <div class="stepBall_in">
+      <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+      <div class="numw">
+        <img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png" />
+        <img src="https://www.piugame.com/l_img/stepball/full/s_num_5.png" />
+      </div>
+    </div>
+    <div class="con2"><ul class="list"><li></li><li><div class="tx">STAGE BREAK</div></li><li></li></ul></div>
+    <table class="recently_play">
+      <tr>
+        <td data-th="Perfect"><span class="tx">555</span></td>
+        <td data-th="Great"><span class="tx">60</span></td>
+        <td data-th="Good"><span class="tx">28</span></td>
+        <td data-th="Bad"><span class="tx">16</span></td>
+        <td data-th="Miss"><span class="tx">28</span></td>
+      </tr>
+    </table>
+    <div class="recently_date_tt">2026-04-11 12:45:50 (GMT+9)</div>
+  </li>
+  <li>
+    <div class="wrap_in"><div class="in" style="background-image:url('https://www.piugame.com/data/song_img/b.png')"></div></div>
+    <div class="song_name"><p>BATTLE NO.1</p></div>
+    <div class="stepBall_in">
+      <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+      <div class="numw">
+        <img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png" />
+        <img src="https://www.piugame.com/l_img/stepball/full/s_num_4.png" />
+      </div>
+    </div>
+    <div class="con2">
+      <ul class="list">
+        <li></li>
+        <li>
+          <div class="tx">927,332</div>
+          <img src="https://www.piugame.com/l_img/grade/aa_p.png" />
+        </li>
+        <li><img src="https://www.piugame.com/l_img/plate/fg.png" /></li>
+      </ul>
+    </div>
+    <table class="recently_play"><tr><td data-th="Perfect"><span class="tx">1</span></td></tr></table>
+    <div class="recently_date_tt">2026-04-11 12:30:00 (GMT+9)</div>
+  </li>
+</ul>
+`;
+
+const PUMBILITY_SCORE_HTML = `
+<div class="pumbility_total_wrap">
+  <div class="inn">
+    <div class="t1">Pumbility</div>
+    <div class="t2">9,352</div>
+  </div>
+</div>
+`;
+
+const TOP_PLAYS_HTML = `
+<div class="rating_rangking_list_w pumblitiySt">
+  <ul class="list">
+    ${Array.from({ length: 50 }, (_, i) => {
+      const rank = i + 1;
+      const song = rank === 1 ? "Spray" : rank === 50 ? "Cleaner" : `Song ${rank}`;
+      const score = rank === 1 ? 300 : rank === 50 ? 160 : 200 - rank;
+      return `
+      <li>
+        <div class="num"><div class="img_wrap"><div class="num"><span class="tt">${rank}</span></div></div></div>
+        <div class="profile_name"><span class="t1">${song}</span><span class="t2">WEi</span></div>
+        <div class="profile_img"><div class="re" style="background-image:url('https://www.piugame.com/data/song_img/${rank}.png')"></div></div>
+        <div class="stepBall_in">
+          <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+          <div class="numw"><img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png" /><img src="https://www.piugame.com/l_img/stepball/full/s_num_5.png" /></div>
+        </div>
+        <div class="grade_wrap"><img src="https://www.piugame.com/l_img/grade/s.png" /></div>
+        <div class="score"><span class="tt">${score}</span></div>
+        <div class="date"><span class="tt">2026-04-13 13:24:55 (GMT+9)</span></div>
+      </li>`;
+    }).join("")}
+  </ul>
+</div>
+`;
+
+const TITLE_HTML = `
+<div class="board_search"><div class="total_wrap"><span class="t2">8</span></div></div>
+<ul class="data_titleList2">
+  <li class="have" data-name="CONRAD FOLLOWER">
+    <div class="txt_w"><div class="txt">CONRAD FOLLOWER</div></div>
+    <div class="txt_w2"><div class="txt">Follower title</div></div>
+    <div class="state_w"><div class="stateBox"><div class="tt">Title in use</div></div></div>
+  </li>
+  <li class="have" data-name="GOLD MEMBER">
+    <div class="txt_w"><div class="txt">GOLD MEMBER</div></div>
+    <div class="state_w"><div class="stateBox"><div class="tt">Set</div></div></div>
+  </li>
+  <li class="locked" data-name="DOMINION CHALLENGER">
+    <div class="txt_w"><div class="txt">DOMINION CHALLENGER</div></div>
+    <div class="state_w"><div class="stateBox"><div class="tt">Not achieving the unlock condition</div></div></div>
+  </li>
+</ul>
+`;
+
+const BEST_SCORE_HTML = `
+<div class="board_search"><div class="total_wrap"><span class="t2">269</span></div></div>
+<ul class="my_best_scoreList">
+  <li>
+    <div class="song_name"><p>BATTLE NO.1</p></div>
+    <div class="stepBall_in">
+      <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+      <div class="numw"><img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png" /><img src="https://www.piugame.com/l_img/stepball/full/s_num_4.png" /></div>
+    </div>
+    <div class="etc_con">
+      <ul class="list">
+        <li><div class="txt_v"><span class="num">927,332</span></div></li>
+        <li><img src="https://www.piugame.com/l_img/grade/aa_p.png" /></li>
+        <li><img src="https://www.piugame.com/l_img/plate/fg.png" /></li>
+      </ul>
+    </div>
+  </li>
+</ul>
+<div class="board_paging">
+  <button type="button" onclick="location.href='?&&amp;page=1'" class="on">1</button>
+  <button type="button" onclick="location.href='?&&amp;page=23'" class="icon"><i class="xi last"></i></button>
+</div>
+`;
 
 describe("parsers", () => {
   test("parsePlayerData extracts profile and summary values", () => {
-    const html = readFixture("play_data.php");
-    const data = parsePlayerData(html, "fixture_user");
+    const data = parsePlayerData(PLAY_DATA_HTML, "fixture_user");
 
     expect(data.username).toBe("fixture_user");
     expect(data.titleName).toBe("CONRAD FOLLOWER");
@@ -44,8 +202,7 @@ describe("parsers", () => {
   });
 
   test("parseRecentPlays extracts plays including stage break and judgments", () => {
-    const html = readFixture("recently_played.php");
-    const plays = parseRecentPlays(html);
+    const plays = parseRecentPlays(RECENT_PLAYED_HTML);
 
     expect(plays.length).toBeGreaterThan(0);
 
@@ -71,7 +228,7 @@ describe("parsers", () => {
   });
 
   test("parsePlayerData normalizes spaces around # in gameIdTag", () => {
-    const html = readFixture("play_data.php").replace("PKIMCHI #7501", "PKIMCHI   #   7501");
+    const html = PLAY_DATA_HTML.replace("PKIMCHI#7501", "PKIMCHI   #   7501");
     const data = parsePlayerData(html, "fixture_user");
 
     expect(data.gameIdTag).toBe("PKIMCHI#7501");
@@ -80,14 +237,12 @@ describe("parsers", () => {
   });
 
   test("parsePumbilityScore extracts total score", () => {
-    const html = readFixture("pumpbility.php");
-    const score = parsePumbilityScore(html);
+    const score = parsePumbilityScore(PUMBILITY_SCORE_HTML);
     expect(score).toBe(9352);
   });
 
   test("parseTopPlays extracts pumbility-contributing entries", () => {
-    const html = readFixture("pumbility.php");
-    const plays = parseTopPlays(html);
+    const plays = parseTopPlays(TOP_PLAYS_HTML);
 
     expect(plays).toHaveLength(50);
 
@@ -108,12 +263,11 @@ describe("parsers", () => {
   });
 
   test("parseTitleEntries extracts title state and metadata", () => {
-    const html = readFixture("title.php");
-    const ownedCount = parseOwnedTitleCount(html);
-    const titles = parseTitleEntries(html);
+    const ownedCount = parseOwnedTitleCount(TITLE_HTML);
+    const titles = parseTitleEntries(TITLE_HTML);
 
     expect(ownedCount).toBe(8);
-    expect(titles.length).toBeGreaterThan(10);
+    expect(titles.length).toBe(3);
 
     const inUse = titles.find((title) => title.name === "CONRAD FOLLOWER");
     expect(inUse).toBeTruthy();
@@ -134,8 +288,7 @@ describe("parsers", () => {
   });
 
   test("parseBestScorePage extracts score items and pagination", () => {
-    const html = readFixture("my_best_score.php");
-    const page = parseBestScorePage(html, 1);
+    const page = parseBestScorePage(BEST_SCORE_HTML, 1);
 
     expect(page.page).toBe(1);
     expect(page.total).toBe(269);
@@ -150,6 +303,6 @@ describe("parsers", () => {
     expect(first.grade).toBe("aa_p");
     expect(first.plate).toBe("fg");
 
-    expect(extractLastPageNumber(html)).toBe(23);
+    expect(extractLastPageNumber(BEST_SCORE_HTML)).toBe(23);
   });
 });

@@ -46,13 +46,11 @@ console.log(profile.gameIdTag, profile.rating);
 
 - `PIU_INSECURE_TLS=1` (optional): disable TLS cert verification globally in SDK defaults
 - `PIU_TLS_FALLBACK_INSECURE=1` (optional): allow TLS fallback retry when cert validation fails
-- `PIU_SONG_MAP_ENABLE=1` (optional): persist `songName -> song_img` mappings from recent plays to `data/song-map.json`
-- `PIU_SONG_MAP_AUTO_FETCH=1` (optional): when `PIU_SONG_MAP_ENABLE=1`, auto-download newly discovered song jacket PNGs to `data/song_img/`
-- `PIU_ASSET_MAP_ENABLE=1` (optional): persist global asset maps to `data/avatar-map.json`, `data/grade-map.json`, and `data/plate-map.json`, and auto-recover referenced avatar/grade/plate PNGs under `data/`
-  - Grade map stores both normalized code keys (example: `aa_p`) and display alias keys (example: `AA+`)
+- `PIU_SONG_MAP_ENABLE=1` (optional): ensure song jacket PNGs referenced by recent plays exist under `data/song_img/` (download only when missing)
+- `PIU_SONG_MAP_AUTO_FETCH=1` (optional): backward-compatible alias for song-jacket ensure mode
+- `PIU_ASSET_MAP_ENABLE=1` (optional): ensure avatar/grade/plate PNG assets referenced by API responses exist under `data/` (download only when missing)
 - `PIU_MONGO_URI` or `MONGODB_URI` (optional): used by one-time scripts that seed MongoDB data
 - `PIU_TEST_USERNAME`, `PIU_TEST_PASSWORD` (tests/examples)
-- `PIU_TEST_SSO_USERNAME`, `PIU_TEST_SSO_PASSWORD` (optional override if SSO creds differ)
 
 ## API
 
@@ -67,13 +65,12 @@ console.log(profile.gameIdTag, profile.rating);
 - `refresh(username)`
 - `fetchAllPlays(username)`
 - `setDatabase(mongoUri)`
-- `setSsoCredentials(username, ssoUsername, ssoPassword)`
 
 ### Top-level wrappers
 
 Also exported for convenience:
 
-- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays`, `get_title`, `refresh`, `fetch_all_plays`, `set_database`, `set_sso_credentials`
+- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays`, `get_title`, `refresh`, `fetch_all_plays`, `set_database`
 
 ## SSO Behavior
 
@@ -82,12 +79,18 @@ When PIUGAME redirects to AM-PASS SSO:
 1. SDK attempts browser-driven SSO resolution (Playwright)
 2. Extracts PIUGAME cookies from browser context
 3. Reuses those cookies in HTTP session flow
+4. Uses the same credentials provided to `login(username, password)`
 
 If SSO cannot be resolved, typed errors are thrown:
 
 - `SSORequiredError`
 - `SSOAutomationError`
 - `AuthenticationError`
+
+## Breaking Change (v1.0.0)
+
+- Removed `setSsoCredentials` and `set_sso_credentials`.
+- Migration: delete `setSsoCredentials(...)` calls and use `login(username, password)` credentials for both PIUGAME and AM-PASS SSO.
 
 ## MongoDB Cache + Session Persistence
 

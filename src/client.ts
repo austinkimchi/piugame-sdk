@@ -1,5 +1,5 @@
 import { Mutex } from "async-mutex";
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -19,8 +19,7 @@ import {
   parseTopPlays,
   parseTitleEntries,
 } from "./parsers";
-import { GlobalAssetMapStore, normalizeAssetCode } from "./asset-map";
-import { extractSongImageFilename, SongMapStore } from "./song-map";
+import { extractSongImageFilename } from "./song-map";
 import { MongoStorage } from "./storage/mongo";
 import type {
   BestPlay,
@@ -72,9 +71,28 @@ interface EnsureAuthOptions {
   force?: boolean;
 }
 
+interface ReauthenticationResult {
+  validated: boolean;
+}
+
 interface ProbeResult {
   valid: boolean;
   ssoRedirectUrl: string | null;
+}
+
+interface BrowserCookie {
+  name: string;
+  value: string;
+  domain: string;
+  path: string;
+  expires: number;
+  secure: boolean;
+  httpOnly: boolean;
+}
+
+interface SsoSubmitResult {
+  submitted: boolean;
+  loginResponse: Promise<void> | null;
 }
 
 const DEFAULT_BASE_URL = "https://www.piugame.com";
@@ -92,6 +110,7 @@ const DEFAULT_TTL: CacheTtlConfig = {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const SESSION_EXPIRY_FALLBACK_MS = 30 * 60 * 1000;
+const SESSION_VALIDATION_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_REDIRECT_LIMIT = 5;
 const DEFAULT_SSO_TIMEOUT_MS = 60_000;
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
@@ -99,11 +118,40 @@ const TLS_FALLBACK_ENV_KEY = "PIU_TLS_FALLBACK_INSECURE";
 const SONG_MAP_ENABLE_ENV_KEY = "PIU_SONG_MAP_ENABLE";
 const SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY = "PIU_SONG_MAP_AUTO_FETCH";
 const ASSET_MAP_ENABLE_ENV_KEY = "PIU_ASSET_MAP_ENABLE";
-const SONG_MAP_PATH = "data/song-map.json";
 const SONG_IMAGE_PATH = "data/song_img";
-const AVATAR_MAP_PATH = "data/avatar-map.json";
-const GRADE_MAP_PATH = "data/grade-map.json";
-const PLATE_MAP_PATH = "data/plate-map.json";
+
+const SSO_USERNAME_SELECTORS = [
+  "input[name='mb_id']",
+  "input[name='id']",
+  "input[name='username']",
+  "input[name='email']",
+  "input[type='email']",
+  "input[type='text']",
+];
+const SSO_PASSWORD_SELECTORS = [
+  "input[name='mb_password']",
+  "input[name='password']",
+  "input[type='password']",
+];
+const SSO_SUBMIT_SELECTORS = [
+  "button[type='submit']",
+  "input[type='submit']",
+  "button[name='login']",
+  "button:has-text('Login')",
+  "button:has-text('Sign in')",
+  "button:has-text('Sign In')",
+];
+const SSO_ENTRY_SELECTORS = [
+  "form[action*='login_check.php']",
+  ...SSO_USERNAME_SELECTORS,
+  ...SSO_PASSWORD_SELECTORS,
+];
+const SSO_AUTHENTICATED_SELECTORS = [
+  ".subProfile_wrap",
+  ".play_data_wrap",
+  ".profile_name",
+];
+const SSO_READINESS_POLL_MS = 100;
 
 const TLS_CERT_ERROR_CODES = new Set([
   "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
@@ -134,6 +182,11 @@ function parseBooleanEnv(value: string | undefined): boolean | null {
   }
 
   return null;
+}
+
+function normalizeAssetCode(value: string | null): string | null {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized || null;
 }
 
 function isPiuHost(baseUrl: string): boolean {
@@ -425,18 +478,10 @@ export class PiuClient {
   private readonly ssoHeadless: boolean;
   private readonly ssoTimeoutMs: number;
   private readonly songMapEnabled: boolean;
-  private readonly songMapAutoFetchEnabled: boolean;
   private readonly assetMapEnabled: boolean;
-  private readonly songMapStore = new SongMapStore(SONG_MAP_PATH);
-  private readonly assetMapStore = new GlobalAssetMapStore(
-    AVATAR_MAP_PATH,
-    GRADE_MAP_PATH,
-    PLATE_MAP_PATH,
-  );
 
   private readonly sessions = new Map<string, SessionState>();
   private readonly credentials = new Map<string, Credentials>();
-  private readonly ssoCredentials = new Map<string, Credentials>();
   private readonly authLocks = new Map<string, Mutex>();
   private readonly inMemoryCache = new Map<string, CacheEntry>();
   private readonly songImageDownloadLocks = new Map<string, Promise<void>>();
@@ -462,24 +507,14 @@ export class PiuClient {
     this.ssoAutoResolve = options.ssoAutoResolve ?? true;
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
-    this.songMapEnabled = parseBooleanEnv(process.env[SONG_MAP_ENABLE_ENV_KEY]) ?? false;
-    this.songMapAutoFetchEnabled =
+    const songMapEnabledFromEnv = parseBooleanEnv(process.env[SONG_MAP_ENABLE_ENV_KEY]) ?? false;
+    const songMapAutoFetchEnabledFromEnv =
       parseBooleanEnv(process.env[SONG_MAP_AUTO_FETCH_ENABLE_ENV_KEY]) ?? false;
+    this.songMapEnabled = songMapEnabledFromEnv || songMapAutoFetchEnabledFromEnv;
     this.assetMapEnabled = parseBooleanEnv(process.env[ASSET_MAP_ENABLE_ENV_KEY]) ?? false;
     this.transport =
       options.transport ??
       createDefaultTransport(this.timeoutMs, rejectUnauthorized, allowInsecureTlsFallback);
-  }
-
-  public setSsoCredentials(username: string, ssoUsername: string, ssoPassword: string): void {
-    if (!username || !ssoUsername || !ssoPassword) {
-      throw new AuthenticationError("Username, SSO username, and SSO password are required.");
-    }
-
-    this.ssoCredentials.set(username, {
-      username: ssoUsername,
-      password: ssoPassword,
-    });
   }
 
   public async setDatabase(mongoUri: string): Promise<void> {
@@ -517,14 +552,6 @@ export class PiuClient {
 
     this.credentials.set(username, { username, password });
     await this.ensureAuthenticated(username, { force: true });
-
-    if (this.songMapEnabled) {
-      try {
-        await this.getRecentPlays(username);
-      } catch {
-        // Best-effort mapper update should not block successful login.
-      }
-    }
   }
 
   public async logout(username: string): Promise<void> {
@@ -544,7 +571,6 @@ export class PiuClient {
 
     this.sessions.delete(username);
     this.credentials.delete(username);
-    this.ssoCredentials.delete(username);
     this.clearUserInMemoryCache(username);
 
     if (this.mongoStorage) {
@@ -565,7 +591,7 @@ export class PiuClient {
         });
 
         const parsed = parsePlayerData(playDataResponse.body, username);
-        const pumbilityScore = await this.fetchPumbilityScore(username);
+        const pumbilityScore = await this.fetchPumbilityScore(username, true);
         return {
           ...parsed,
           pumbilityScore,
@@ -573,7 +599,7 @@ export class PiuClient {
       },
     });
 
-    await this.updateAssetMapFromPlayerData(profile);
+    await this.ensureAssetsFromPlayerData(profile);
     return profile;
   }
 
@@ -593,8 +619,10 @@ export class PiuClient {
       },
     });
 
-    await this.updateSongMapFromRecentPlays(plays);
-    await this.updateAssetMapFromRecentPlays(plays);
+    await Promise.all([
+      this.ensureSongImagesFromRecentPlays(plays),
+      this.ensureAssetsFromRecentPlays(plays),
+    ]);
     return plays;
   }
 
@@ -654,7 +682,7 @@ export class PiuClient {
       pumbilityScore,
     };
     await this.writeCache(username, this.buildCacheKey(username, "player_data"), "player_data", result, this.cacheTtl.playerDataMs);
-    await this.updateAssetMapFromPlayerData(result);
+    await this.ensureAssetsFromPlayerData(result);
     return result;
   }
 
@@ -744,7 +772,7 @@ export class PiuClient {
       },
     });
 
-    await this.updateAssetMapFromBestPlays(result.plays);
+    await this.ensureAssetsFromBestPlays(result.plays);
     return result;
   }
 
@@ -856,17 +884,12 @@ export class PiuClient {
     }
   }
 
-  private async updateSongMapFromRecentPlays(plays: RecentPlay[]): Promise<void> {
+  private async ensureSongImagesFromRecentPlays(plays: RecentPlay[]): Promise<void> {
     if (!this.songMapEnabled || plays.length === 0) {
       return;
     }
 
     try {
-      const newFilenames = await this.songMapStore.recordRecentPlays(plays);
-      if (!this.songMapAutoFetchEnabled || newFilenames.length === 0) {
-        return;
-      }
-
       const sourceUrlByFilename = new Map<string, string>();
       for (const play of plays) {
         if (!play.songImageUrl) {
@@ -881,18 +904,11 @@ export class PiuClient {
         sourceUrlByFilename.set(filename, play.songImageUrl);
       }
 
-      await Promise.all(
-        newFilenames.map(async (filename) => {
-          const sourceUrl = sourceUrlByFilename.get(filename);
-          if (!sourceUrl) {
-            return;
-          }
-
-          await this.ensureSongImageDownloaded(filename, sourceUrl);
-        }),
-      );
+      await Promise.all(Array.from(sourceUrlByFilename.entries()).map(
+        ([filename, sourceUrl]) => this.ensureSongImageDownloaded(filename, sourceUrl),
+      ));
     } catch {
-      // Best-effort mapper update; ignore write failures.
+      // Best-effort song image ensure; ignore write failures.
     }
   }
 
@@ -943,29 +959,26 @@ export class PiuClient {
     }
   }
 
-  private async updateAssetMapFromPlayerData(profile: PlayerData): Promise<void> {
+  private async ensureAssetsFromPlayerData(profile: PlayerData): Promise<void> {
     if (!this.assetMapEnabled) {
       return;
     }
 
     try {
-      await this.assetMapStore.recordPlayerData(profile);
       if (profile.avatarUrl) {
         await this.ensureAssetImageDownloaded(profile.avatarUrl);
       }
     } catch {
-      // Best-effort asset map update; ignore write failures.
+      // Best-effort asset image ensure; ignore write failures.
     }
   }
 
-  private async updateAssetMapFromRecentPlays(plays: RecentPlay[]): Promise<void> {
+  private async ensureAssetsFromRecentPlays(plays: RecentPlay[]): Promise<void> {
     if (!this.assetMapEnabled || plays.length === 0) {
       return;
     }
 
     try {
-      await this.assetMapStore.recordRecentPlays(plays);
-
       const gradeCodes = new Set<string>();
       const plateCodes = new Set<string>();
       for (const play of plays) {
@@ -986,21 +999,17 @@ export class PiuClient {
           this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/plate/${plate}.png`)),
         ),
       ]);
-
-      await this.recoverMissingGradeAssetsFromMap();
     } catch {
-      // Best-effort asset map update; ignore write failures.
+      // Best-effort asset image ensure; ignore write failures.
     }
   }
 
-  private async updateAssetMapFromBestPlays(plays: BestPlay[]): Promise<void> {
+  private async ensureAssetsFromBestPlays(plays: BestPlay[]): Promise<void> {
     if (!this.assetMapEnabled || plays.length === 0) {
       return;
     }
 
     try {
-      await this.assetMapStore.recordBestPlays(plays);
-
       const gradeCodes = new Set<string>();
       const plateCodes = new Set<string>();
       for (const play of plays) {
@@ -1023,7 +1032,7 @@ export class PiuClient {
         ),
       ]);
     } catch {
-      // Best-effort asset map update; ignore write failures.
+      // Best-effort asset image ensure; ignore write failures.
     }
   }
 
@@ -1092,41 +1101,6 @@ export class PiuClient {
     }
 
     return path.join(process.cwd(), "data", relativePath);
-  }
-
-  private async recoverMissingGradeAssetsFromMap(): Promise<void> {
-    const gradeMapPath = path.resolve(process.cwd(), GRADE_MAP_PATH);
-    let parsed: Record<string, unknown>;
-
-    try {
-      const raw = await readFile(gradeMapPath, "utf8");
-      const decoded = JSON.parse(raw) as unknown;
-      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
-        return;
-      }
-
-      parsed = decoded as Record<string, unknown>;
-    } catch {
-      return;
-    }
-
-    const gradeKeys = new Set<string>();
-    for (const key of Object.keys(parsed)) {
-      if (/^[a-z0-9_]+$/i.test(key)) {
-        gradeKeys.add(key.toLowerCase());
-        continue;
-      }
-
-      if (/^[a-z0-9]+\+$/i.test(key)) {
-        gradeKeys.add(key.toLowerCase().replace(/\+$/i, "_p"));
-      }
-    }
-
-    await Promise.all(
-      Array.from(gradeKeys).map((grade) =>
-        this.ensureAssetImageDownloaded(absoluteUrl(this.baseUrl, `/l_img/grade/${grade}.png`)),
-      ),
-    );
   }
 
   private async downloadBinaryAsset(urlText: string): Promise<Buffer> {
@@ -1306,6 +1280,13 @@ export class PiuClient {
       const existing = this.sessions.get(username);
 
       if (!options.force && existing && !this.isSessionExpired(existing)) {
+        if (
+          existing.lastValidatedAt > 0 &&
+          Date.now() - existing.lastValidatedAt < SESSION_VALIDATION_COOLDOWN_MS
+        ) {
+          return;
+        }
+
         const probe = await this.probeSession(username);
         if (probe.valid) {
           existing.lastValidatedAt = Date.now();
@@ -1315,7 +1296,11 @@ export class PiuClient {
         }
 
         if (probe.ssoRedirectUrl) {
-          await this.reauthenticate(username);
+          const reauthResult = await this.reauthenticate(username);
+          if (reauthResult.validated) {
+            return;
+          }
+
           const afterReauth = await this.probeSession(username);
           if (afterReauth.valid) {
             return;
@@ -1329,7 +1314,10 @@ export class PiuClient {
         }
       }
 
-      await this.reauthenticate(username);
+      const reauthResult = await this.reauthenticate(username);
+      if (reauthResult.validated) {
+        return;
+      }
 
       const finalProbe = await this.probeSession(username);
       if (finalProbe.valid) {
@@ -1344,7 +1332,7 @@ export class PiuClient {
     });
   }
 
-  private async reauthenticate(username: string): Promise<void> {
+  private async reauthenticate(username: string): Promise<ReauthenticationResult> {
     const credentials = this.credentials.get(username);
     if (!credentials) {
       throw new SessionExpiredError(
@@ -1362,21 +1350,30 @@ export class PiuClient {
 
       await this.resolveSsoAndHydrateSession(username, redirectLocation);
       const probeAfterSso = await this.probeSession(username);
-      if (!probeAfterSso.valid && !probeAfterSso.ssoRedirectUrl) {
+      if (probeAfterSso.valid) {
+        const session = this.sessions.get(username);
+        if (session) {
+          session.lastValidatedAt = Date.now();
+          this.sessions.set(username, session);
+          await this.persistSession(username);
+        }
+
+        return { validated: true };
+      }
+
+      if (probeAfterSso.ssoRedirectUrl) {
+        throw new SSORequiredError(probeAfterSso.ssoRedirectUrl);
+      }
+
+      if (!probeAfterSso.valid) {
         throw new AuthenticationError(
           "Automatic SSO completed but did not produce an authenticated PIUGAME session.",
         );
       }
-
-      response = await this.sendLoginRequest(username, credentials);
-      redirectLocation = this.extractLocation(response);
-
-      if (redirectLocation && isSsoUrl(redirectLocation)) {
-        throw new SSORequiredError(redirectLocation);
-      }
     }
 
     await this.applyLoginResponseToSession(username, response, redirectLocation);
+    return { validated: false };
   }
 
   private async sendLoginRequest(
@@ -1447,7 +1444,7 @@ export class PiuClient {
     username: string,
     redirectUrl: string,
   ): Promise<void> {
-    const credentials = this.ssoCredentials.get(username) ?? this.credentials.get(username);
+    const credentials = this.credentials.get(username);
     if (!credentials) {
       throw new SSOAutomationError(
         `Cannot resolve SSO for '${username}' because SSO credentials are unavailable.`,
@@ -1480,49 +1477,19 @@ export class PiuClient {
       const page = await context.newPage();
 
       await page.goto(redirectUrl, {
-        waitUntil: "domcontentloaded",
+        waitUntil: "commit",
         timeout: this.ssoTimeoutMs,
       });
 
-      const submitted = await this.trySubmitSsoCredentials(page, credentials);
-
-      if (!submitted) {
-        await page.waitForURL(
-          (url: URL) => this.isUrlWithinBaseHost(url.toString()),
-          { timeout: this.ssoTimeoutMs },
-        );
-      }
-
-      if (submitted && this.isLoginPageUrl(page.url())) {
-        throw new AuthenticationError(
-          "Automatic SSO credentials were rejected (redirected to login page).",
-        );
-      }
-
-      const browserCookies = (await context.cookies()) as Array<{
-        name: string;
-        value: string;
-        domain: string;
-        path: string;
-        expires: number;
-        secure: boolean;
-        httpOnly: boolean;
-      }>;
-
-      const mappedCookies: SessionCookie[] = browserCookies
-        .filter((cookie) => this.isCookieForBaseHost(cookie.domain))
-        .map((cookie) => ({
-          name: cookie.name,
-          value: cookie.value,
-          domain: cookie.domain,
-          path: cookie.path || "/",
-          expiresAt:
-            Number.isFinite(cookie.expires) && cookie.expires > 0
-              ? new Date(cookie.expires * 1000)
-              : null,
-          secure: Boolean(cookie.secure),
-          httpOnly: Boolean(cookie.httpOnly),
-        }));
+      await this.waitForSsoEntryReadiness(context, page);
+      const submitResult = await this.trySubmitSsoCredentials(page, credentials);
+      const browserCookies = await this.waitForSsoSessionReadiness(
+        context,
+        page,
+        submitResult.submitted,
+        submitResult.loginResponse,
+      );
+      const mappedCookies = this.mapBrowserCookiesToSessionCookies(browserCookies);
 
       if (mappedCookies.length === 0) {
         throw new SSOAutomationError("Automatic SSO finished without PIUGAME session cookies.");
@@ -1536,7 +1503,7 @@ export class PiuClient {
       this.sessions.set(username, session);
       await this.persistSession(username);
     } catch (error) {
-      if (error instanceof SSOAutomationError) {
+      if (error instanceof AuthenticationError || error instanceof SSOAutomationError) {
         throw error;
       }
 
@@ -1551,7 +1518,10 @@ export class PiuClient {
     }
   }
 
-  private async trySubmitSsoCredentials(page: any, credentials: Credentials): Promise<boolean> {
+  private async trySubmitSsoCredentials(
+    page: any,
+    credentials: Credentials,
+  ): Promise<SsoSubmitResult> {
     try {
       const loginForm = page.locator("form[action*='login_check.php']").first();
       if ((await loginForm.count()) > 0) {
@@ -1562,67 +1532,188 @@ export class PiuClient {
           await idInForm.fill(credentials.username, { timeout: 5_000 });
           await pwInForm.fill(credentials.password, { timeout: 5_000 });
 
+          const loginResponse = this.createSsoLoginResponseWait(page);
           await loginForm.evaluate((form: HTMLFormElement) => form.submit());
-          await this.waitForPostSubmitStabilization(page);
-          return true;
+          return { submitted: true, loginResponse };
         }
       }
     } catch {
       // Continue with generic fallback selectors.
     }
 
-    const usernameSelectors = [
-      "input[name='mb_id']",
-      "input[name='id']",
-      "input[name='username']",
-      "input[name='email']",
-      "input[type='email']",
-      "input[type='text']",
-    ];
-    const passwordSelectors = [
-      "input[name='mb_password']",
-      "input[name='password']",
-      "input[type='password']",
-    ];
-    const submitSelectors = [
-      "button[type='submit']",
-      "input[type='submit']",
-      "button[name='login']",
-      "button:has-text('Login')",
-      "button:has-text('Sign in')",
-      "button:has-text('Sign In')",
-    ];
-
-    const usernameSelector = await this.findFirstMatchingSelector(page, usernameSelectors);
-    const passwordSelector = await this.findFirstMatchingSelector(page, passwordSelectors);
+    const usernameSelector = await this.findFirstMatchingSelector(page, SSO_USERNAME_SELECTORS);
+    const passwordSelector = await this.findFirstMatchingSelector(page, SSO_PASSWORD_SELECTORS);
 
     if (!usernameSelector || !passwordSelector) {
-      return false;
+      return { submitted: false, loginResponse: null };
     }
 
     await page.fill(usernameSelector, credentials.username, { timeout: 5_000 });
     await page.fill(passwordSelector, credentials.password, { timeout: 5_000 });
 
-    const submitSelector = await this.findFirstMatchingSelector(page, submitSelectors);
+    const submitSelector = await this.findFirstMatchingSelector(page, SSO_SUBMIT_SELECTORS);
     if (submitSelector) {
+      const loginResponse = this.createSsoLoginResponseWait(page);
       await page.click(submitSelector, { timeout: 5_000 });
-      await this.waitForPostSubmitStabilization(page);
-      return true;
+      return { submitted: true, loginResponse };
     }
 
+    const loginResponse = this.createSsoLoginResponseWait(page);
     await page.press(passwordSelector, "Enter", { timeout: 3_000 });
-    await this.waitForPostSubmitStabilization(page);
-    return true;
+    return { submitted: true, loginResponse };
   }
 
-  private async waitForPostSubmitStabilization(page: any): Promise<void> {
-    await page.waitForLoadState("domcontentloaded", { timeout: this.ssoTimeoutMs }).catch(() => {
-      // Ignore DOM load timeout; continue with best-effort stabilization.
+  protected async waitForSsoEntryReadiness(context: any, page: any): Promise<void> {
+    const deadline = Date.now() + this.ssoTimeoutMs;
+
+    while (Date.now() < deadline) {
+      if (await this.hasAnyMatchingSelector(page, SSO_ENTRY_SELECTORS)) {
+        return;
+      }
+
+      const cookies = await this.getBaseHostBrowserCookies(context);
+      const pageUrl = this.getPageUrl(page);
+      if (
+        cookies.length > 0 &&
+        this.isUrlWithinBaseHost(pageUrl) &&
+        !this.isLoginPageUrl(pageUrl) &&
+        await this.hasAnyMatchingSelector(page, SSO_AUTHENTICATED_SELECTORS)
+      ) {
+        return;
+      }
+
+      await this.waitForSsoPoll(page, deadline);
+    }
+
+    throw new SSOAutomationError("Automatic SSO did not reach a PIUGAME login form before timeout.");
+  }
+
+  protected async waitForSsoSessionReadiness(
+    context: any,
+    page: any,
+    submitted: boolean,
+    loginResponse: Promise<void> | null = null,
+  ): Promise<BrowserCookie[]> {
+    const deadline = Date.now() + this.ssoTimeoutMs;
+    let loginResponseSettled = !submitted || !loginResponse;
+    const trackedLoginResponse = loginResponse?.then(() => {
+      loginResponseSettled = true;
     });
-    await page.waitForLoadState("networkidle", { timeout: Math.min(this.ssoTimeoutMs, 15_000) }).catch(() => {
-      // Ignore network-idle timeout; continue with best-effort stabilization.
-    });
-    await page.waitForTimeout(800);
+
+    while (Date.now() < deadline) {
+      const pageUrl = this.getPageUrl(page);
+      const isLoginPage = this.isLoginPageUrl(pageUrl);
+      if (submitted && isLoginPage) {
+        throw new AuthenticationError(
+          "Automatic SSO credentials were rejected (redirected to login page).",
+        );
+      }
+
+      const cookies = await this.getBaseHostBrowserCookies(context);
+      if (
+        cookies.length > 0 &&
+        loginResponseSettled &&
+        this.isUrlWithinBaseHost(pageUrl) &&
+        !isLoginPage &&
+        await this.hasAnyMatchingSelector(page, SSO_AUTHENTICATED_SELECTORS)
+      ) {
+        return cookies;
+      }
+
+      const poll = this.waitForSsoPoll(page, deadline);
+      if (trackedLoginResponse && !loginResponseSettled) {
+        await Promise.race([trackedLoginResponse, poll]);
+      } else {
+        await poll;
+      }
+    }
+
+    throw new SSOAutomationError("Automatic SSO finished without PIUGAME session cookies.");
+  }
+
+  private createSsoLoginResponseWait(page: any): Promise<void> | null {
+    if (typeof page.waitForResponse !== "function") {
+      return null;
+    }
+
+    return page
+      .waitForResponse(
+        (response: { request?: () => { method?: () => string }; url?: () => string }) => {
+          try {
+            return (
+              response.request?.().method?.().toUpperCase() === "POST" &&
+              /\/bbs\/login_check\.php/i.test(response.url?.() ?? "")
+            );
+          } catch {
+            return false;
+          }
+        },
+        { timeout: Math.min(this.ssoTimeoutMs, 10_000) },
+      )
+      .then(() => undefined)
+      .catch(() => undefined);
+  }
+
+  private async waitForSsoPoll(page: any, deadline: number): Promise<void> {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return;
+    }
+
+    const waitMs = Math.min(SSO_READINESS_POLL_MS, remainingMs);
+    if (typeof page.waitForTimeout === "function") {
+      await page.waitForTimeout(waitMs);
+      return;
+    }
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, waitMs));
+  }
+
+  private async getBaseHostBrowserCookies(context: any): Promise<BrowserCookie[]> {
+    const cookies = (await context.cookies()) as BrowserCookie[];
+    return cookies.filter((cookie) => this.isCookieForBaseHost(cookie.domain));
+  }
+
+  private mapBrowserCookiesToSessionCookies(browserCookies: BrowserCookie[]): SessionCookie[] {
+    return browserCookies.map((cookie) => ({
+      name: cookie.name,
+      value: cookie.value,
+      domain: cookie.domain,
+      path: cookie.path || "/",
+      expiresAt:
+        Number.isFinite(cookie.expires) && cookie.expires > 0
+          ? new Date(cookie.expires * 1000)
+          : null,
+      secure: Boolean(cookie.secure),
+      httpOnly: Boolean(cookie.httpOnly),
+    }));
+  }
+
+  private getPageUrl(page: any): string {
+    try {
+      if (typeof page.url === "function") {
+        return page.url();
+      }
+    } catch {
+      return "";
+    }
+
+    return "";
+  }
+
+  private async hasAnyMatchingSelector(page: any, selectors: string[]): Promise<boolean> {
+    for (const selector of selectors) {
+      try {
+        const count = await page.locator(selector).count();
+        if (count > 0) {
+          return true;
+        }
+      } catch {
+        // Ignore selector failures and continue trying alternatives.
+      }
+    }
+
+    return false;
   }
 
   private async findFirstMatchingSelector(page: any, selectors: string[]): Promise<string | null> {

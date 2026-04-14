@@ -14,13 +14,8 @@ function getRequiredEnv(name: string): string {
 async function main(): Promise<void> {
   const username = getRequiredEnv("PIU_TEST_USERNAME");
   const password = getRequiredEnv("PIU_TEST_PASSWORD");
-  const ssoUsername = process.env.PIU_TEST_SSO_USERNAME;
-  const ssoPassword = process.env.PIU_TEST_SSO_PASSWORD;
 
   const client = new PiuClient();
-  if (ssoUsername && ssoPassword) {
-    client.setSsoCredentials(username, ssoUsername, ssoPassword);
-  }
 
   try {
     await client.login(username, password);

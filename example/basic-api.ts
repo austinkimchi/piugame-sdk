@@ -42,8 +42,6 @@ async function main(): Promise<void> {
   mark("read-env");
   const username = getRequiredEnv("PIU_TEST_USERNAME");
   const password = getRequiredEnv("PIU_TEST_PASSWORD");
-  const ssoUsername = process.env.PIU_TEST_SSO_USERNAME;
-  const ssoPassword = process.env.PIU_TEST_SSO_PASSWORD;
   const ssoHeadlessOverride = parseBooleanEnv(process.env.PIU_SSO_HEADLESS);
   const ssoTimeoutMsRaw = process.env.PIU_SSO_TIMEOUT_MS;
   const ssoTimeoutMsParsed = ssoTimeoutMsRaw ? Number(ssoTimeoutMsRaw) : undefined;
@@ -67,11 +65,6 @@ async function main(): Promise<void> {
     );
   }
 
-  if (ssoUsername && ssoPassword) {
-    mark("set-sso-credentials");
-    client.setSsoCredentials(username, ssoUsername, ssoPassword);
-  }
-
   try {
     mark("login");
     await client.login(username, password);
@@ -81,9 +74,9 @@ async function main(): Promise<void> {
     console.log("Player:", playerData.gameIdTag ?? playerData.username);
     console.log("Data:", playerData);
 
-    mark("get-top-plays");
-    const topScores = await client.getTopPlays(username);
-    console.log("Top Plays:", topScores);
+    // mark("get-top-plays");
+    // const topScores = await client.getTopPlays(username);
+    // console.log("Top Plays:", topScores);
 
     // mark("get-recent-plays");
     // const recentPlays = await client.getRecentPlays(username);

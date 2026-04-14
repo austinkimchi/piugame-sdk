@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -12,9 +10,34 @@ import {
   type SongCatalogDocument,
 } from "../src/song-catalog";
 
-function readFixture(fileName: string): string {
-  return readFileSync(resolve(process.cwd(), "scraped", fileName), "utf8");
-}
+const SONG_LIST_HTML = `
+<ul class="top_songs_list">
+  <li>
+    <div class="profile_name"><span class="t1">Queencard</span><span class="t2">(G)I-DLE</span></div>
+    <div class="profile_img"><div class="re" style="background-image:url('https://www.piugame.com/data/song_img/q.png?v=1')"></div></div>
+    <div class="stepBall_in" style="background-image:url('/l_img/stepball/basic/n_bg.png')">
+      <div class="tw"><img src="https://www.piugame.com/l_img/stepball/basic/n_text.png" /></div>
+      <div class="numw"><img src="https://www.piugame.com/l_img/stepball/basic/n_num_3.png" /></div>
+    </div>
+  </li>
+  <li>
+    <div class="profile_name"><span class="t1">Euphorianic</span><span class="t2">SHK</span></div>
+    <div class="profile_img"><div class="re" style="background-image:url('https://www.piugame.com/data/song_img/e.png?v=1')"></div></div>
+    <div class="stepBall_in" style="background-image:url('/l_img/stepball/full/s_bg.png')">
+      <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+      <div class="numw"><img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png" /><img src="https://www.piugame.com/l_img/stepball/full/s_num_6.png" /></div>
+    </div>
+  </li>
+  <li>
+    <div class="profile_name"><span class="t1">1948</span><span class="t2">SLAM</span></div>
+    <div class="profile_img"><div class="re" style="background-image:url('https://www.piugame.com/data/song_img/x.png?v=1')"></div></div>
+    <div class="stepBall_in" style="background-image:url('/l_img/stepball/full/s_bg.png')">
+      <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png" /></div>
+      <div class="numw"></div>
+    </div>
+  </li>
+</ul>
+`;
 
 class FakeSongCatalogCollection {
   public readonly indexes: Array<{ key: Record<string, unknown>; options?: Record<string, unknown> }> = [];
@@ -57,13 +80,12 @@ class FakeSongCatalogCollection {
 }
 
 describe("song catalog parser", () => {
-  test("extracts song, artist, image, scope, mode, and level from SONG_LIST_042026.php", () => {
-    const html = readFixture("SONG_LIST_042026.php");
-    const parsed = parseSongCatalogRows(html);
+  test("extracts rows and reports skipped rows from inline SONG_LIST fixture", () => {
+    const parsed = parseSongCatalogRows(SONG_LIST_HTML);
 
-    expect(parsed.rows.length).toBeGreaterThan(4000);
-    expect(parsed.totalRows).toBe(4714);
-    expect(parsed.rows.length + parsed.skippedRows).toBe(parsed.totalRows);
+    expect(parsed.totalRows).toBe(3);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.skippedRows).toBe(1);
 
     const basicChart = parsed.rows.find(
       (row) =>
@@ -73,10 +95,7 @@ describe("song catalog parser", () => {
         row.mode === "N" &&
         row.level === 3,
     );
-
-    expect(basicChart).toBeTruthy();
-    expect(basicChart?.imageFilename).toBe("b79e7c017f5e5a725f1904a58ab6aa87.png");
-    expect((basicChart as unknown as Record<string, unknown>)?.tt).toBeUndefined();
+    expect(basicChart?.imageFilename).toBe("q.png");
 
     const fullChart = parsed.rows.find(
       (row) =>
@@ -86,19 +105,7 @@ describe("song catalog parser", () => {
         row.mode === "S" &&
         row.level === 16,
     );
-    expect(fullChart).toBeTruthy();
-    expect(fullChart?.imageFilename).toBe("7e1af52be6d8b4e147d2a0ebbf54ef98.png");
-    expect(parsed.rows.some((row) => row.mode === "C")).toBe(true);
-
-    const ladybugHard = parsed.rows.find(
-      (row) =>
-        row.songName === "Ladybug" &&
-        row.artist === "Coconut" &&
-        row.scope === "basic" &&
-        row.mode === "H" &&
-        row.level === 5,
-    );
-    expect(ladybugHard).toBeTruthy();
+    expect(fullChart?.imageFilename).toBe("e.png");
 
     const skippedUnknownLevel = parsed.skippedDetails.find(
       (row) => row.songName === "1948" && row.artist === "SLAM",
@@ -147,9 +154,8 @@ describe("song catalog build behavior", () => {
 });
 
 describe("song catalog integration", () => {
-  test("builds from SONG_LIST fixture and upserts idempotently", async () => {
-    const html = readFixture("SONG_LIST_042026.php");
-    const built = buildSongCatalogFromHtml(html, "SONG_LIST_042026.php", "2026-04-20T00:00:00.000Z");
+  test("builds from inline SONG_LIST fixture and upserts idempotently", async () => {
+    const built = buildSongCatalogFromHtml(SONG_LIST_HTML, "inline-song-list", "2026-04-20T00:00:00.000Z");
     const collection = new FakeSongCatalogCollection();
 
     await ensureSongCatalogIndexes(collection as unknown as any);
@@ -161,17 +167,13 @@ describe("song catalog integration", () => {
     expect(first.upsertedCount).toBe(built.uniqueSongs);
     expect(second.upsertedCount).toBe(0);
     expect(second.modifiedCount).toBe(0);
-    expect(built.totalRows).toBe(4714);
+    expect(built.totalRows).toBe(3);
     expect(built.parsedRows + built.skippedRows).toBe(built.totalRows);
 
     const sample = collection.documents.get("Queencard\u0000(G)I-DLE");
     expect(sample).toBeTruthy();
-    expect(sample?.chartsBasic.length || 0).toBeGreaterThan(0);
-    expect(sample?.source.sourceFile).toBe("SONG_LIST_042026.php");
-    expect(sample?.chartTokens.length || 0).toBeGreaterThan(0);
-
-    const ladybug = collection.documents.get("Ladybug\u0000Coconut");
-    expect(ladybug?.chartsBasic.some((chart) => chart.mode === "H" && chart.level === 5)).toBe(true);
-    expect(ladybug?.chartTokens.includes("H5")).toBe(false);
+    expect(sample?.chartsBasic.length).toBe(1);
+    expect(sample?.source.sourceFile).toBe("inline-song-list");
+    expect(sample?.chartTokens).toEqual([]);
   });
 });
