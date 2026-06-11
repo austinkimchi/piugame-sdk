@@ -8,3 +8,4 @@ data
 .npmrc
 output_data
 scripts
+*.js
