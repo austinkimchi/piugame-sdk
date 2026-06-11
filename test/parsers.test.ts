@@ -143,11 +143,21 @@ const TITLE_HTML = `
   </li>
   <li class="have" data-name="GOLD MEMBER">
     <div class="txt_w"><div class="txt">GOLD MEMBER</div></div>
+    <form action="https://www.piugame.com/logic/user_title_update.php" method="post">
+      <input type="hidden" name="no" value="M3RkK2M0Wm1Ncms0UXljOFl3alNBdz09" />
+    </form>
     <div class="state_w"><div class="stateBox"><div class="tt">Set</div></div></div>
   </li>
   <li class="locked" data-name="DOMINION CHALLENGER">
     <div class="txt_w"><div class="txt">DOMINION CHALLENGER</div></div>
     <div class="state_w"><div class="stateBox"><div class="tt">Not achieving the unlock condition</div></div></div>
+  </li>
+  <li class="have" data-name="BEGINNER">
+    <div class="txt_w"><div class="txt">BEGINNER</div></div>
+    <form action="https://www.piugame.com/logic/user_title_update.php" method="post">
+      <input type="hidden" name="no" value="cU1zQktpTE84SWZPSTNIbkpKSytNUT09" />
+    </form>
+    <div class="state_w"><div class="stateBox"><div class="tt">Set</div></div></div>
   </li>
 </ul>
 `;
@@ -267,24 +277,31 @@ describe("parsers", () => {
     const titles = parseTitleEntries(TITLE_HTML);
 
     expect(ownedCount).toBe(8);
-    expect(titles.length).toBe(3);
+    expect(titles.length).toBe(4);
 
     const inUse = titles.find((title) => title.name === "CONRAD FOLLOWER");
     expect(inUse).toBeTruthy();
     expect(inUse?.owned).toBe(true);
     expect(inUse?.inUse).toBe(true);
+    expect(inUse?.setToken).toBeNull();
     expect(inUse?.statusText).toBe("Title in use");
 
     const settable = titles.find((title) => title.name === "GOLD MEMBER");
     expect(settable).toBeTruthy();
     expect(settable?.owned).toBe(true);
     expect(settable?.settable).toBe(true);
+    expect(settable?.setToken).toBe("M3RkK2M0Wm1Ncms0UXljOFl3alNBdz09");
     expect(settable?.statusText).toBe("Set");
 
     const locked = titles.find((title) => title.name === "DOMINION CHALLENGER");
     expect(locked).toBeTruthy();
     expect(locked?.owned).toBe(false);
     expect(locked?.locked).toBe(true);
+    expect(locked?.setToken).toBeNull();
+
+    const beginner = titles.find((title) => title.name === "BEGINNER");
+    expect(beginner).toBeTruthy();
+    expect(beginner?.description).toBeNull();
   });
 
   test("parseBestScorePage extracts score items and pagination", () => {
