@@ -363,6 +363,7 @@ export function parseTitleEntries(html: string): TitleEntry[] {
         cleanText(root.find(".txt_w .txt").first().text()) ||
         "Unknown",
       description: cleanText(root.find(".txt_w2 .txt").first().text()) || null,
+      setToken: cleanText(root.find('input[name="no"]').first().attr("value")) || null,
       className,
       owned,
       locked: !owned || status.lockedByText,

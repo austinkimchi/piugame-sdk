@@ -8,6 +8,7 @@ import {
   SSOAutomationError,
   SessionExpiredError,
   SSORequiredError,
+  TitleUpdateError,
 } from "./errors";
 import * as http from "node:http";
 import * as https from "node:https";
@@ -37,6 +38,7 @@ import type {
   TransportRequest,
   TransportResponse,
   TitleEntry,
+  TitleUpdateResult,
 } from "./types";
 
 interface Credentials {
@@ -203,6 +205,10 @@ function normalizeAssetCode(value: string | null): string | null {
   return normalized || null;
 }
 
+function normalizeTitleName(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
 function isPiuHost(baseUrl: string): boolean {
   try {
     const host = new URL(baseUrl).hostname.toLowerCase();
@@ -330,6 +336,10 @@ function normalizePath(path: string): string {
 
 function absoluteUrl(baseUrl: string, path: string): string {
   return new URL(path, baseUrl).toString();
+}
+
+function originFromBaseUrl(baseUrl: string): string {
+  return new URL(baseUrl).origin;
 }
 
 function isRedirectStatus(status: number): boolean {
@@ -664,20 +674,67 @@ export class PiuClient {
   }
 
   public async getTitle(username: string): Promise<TitleEntry[]> {
-    return this.getCachedParsedEndpoint({
-      username,
-      endpoint: "title",
-      cacheTtlMs: this.cacheTtl.titleMs,
-      loader: async () => {
-        const response = await this.authenticatedRequest(username, {
-          method: "GET",
-          path: "/my_page/title.php",
-          redirect: "manual",
-        });
+    return this.fetchFreshTitleEntries(username);
+  }
 
-        return parseTitleEntries(response.body);
+  public async setTitle(username: string, titleName: string): Promise<TitleUpdateResult> {
+    const normalizedTitleName = normalizeTitleName(titleName);
+    if (!normalizedTitleName) {
+      throw new TitleUpdateError("Title name is required.");
+    }
+
+    const currentTitles = await this.fetchFreshTitleEntries(username);
+    const target = currentTitles.find(
+      (title) => normalizeTitleName(title.name) === normalizedTitleName,
+    );
+
+    if (!target) {
+      throw new TitleUpdateError(`Title '${titleName}' was not found.`);
+    }
+
+    if (target.inUse) {
+      throw new TitleUpdateError(`Title '${target.name}' is already in use.`);
+    }
+
+    if (!target.owned || target.locked) {
+      throw new TitleUpdateError(`Title '${target.name}' is not owned or is locked.`);
+    }
+
+    if (!target.settable || !target.setToken) {
+      throw new TitleUpdateError(`Title '${target.name}' cannot be set from the current page.`);
+    }
+
+    const body = new URLSearchParams({ no: target.setToken }).toString();
+    await this.authenticatedRequest(username, {
+      method: "POST",
+      path: "/logic/user_title_update.php",
+      body,
+      headers: {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "content-type": "application/x-www-form-urlencoded",
+        origin: originFromBaseUrl(this.baseUrl),
+        referer: absoluteUrl(this.baseUrl, "/my_page/title.php"),
       },
+      redirect: "manual",
     });
+
+    await this.clearUserEndpointCache(username, ["title", "player_data"]);
+
+    const titles = await this.fetchFreshTitleEntries(username);
+    const updated = titles.find(
+      (title) => normalizeTitleName(title.name) === normalizeTitleName(target.name),
+    );
+    const success = updated?.inUse === true;
+
+    return {
+      username,
+      titleName: updated?.name ?? target.name,
+      success,
+      message: success
+        ? `Title '${updated?.name ?? target.name}' is now in use.`
+        : `Title '${target.name}' update was submitted, but the refreshed title page did not show it in use.`,
+      titles,
+    };
   }
 
   public async refresh(username: string): Promise<PlayerData> {
@@ -824,6 +881,26 @@ export class PiuClient {
     }
   }
 
+  private async fetchFreshTitleEntries(username: string): Promise<TitleEntry[]> {
+    const response = await this.authenticatedRequest(username, {
+      method: "GET",
+      path: "/my_page/title.php",
+      redirect: "manual",
+    });
+
+    const titles = parseTitleEntries(response.body);
+    await this.persistTitleCatalog(titles);
+    return titles;
+  }
+
+  private async persistTitleCatalog(titles: TitleEntry[]): Promise<void> {
+    if (!this.mongoStorage) {
+      return;
+    }
+
+    await this.mongoStorage.upsertTitleCatalog(titles);
+  }
+
   private async getCachedParsedEndpoint<T>(options: {
     username: string;
     endpoint: EndpointName;
@@ -901,6 +978,25 @@ export class PiuClient {
       if (value.username === username || key.startsWith(`${username}:`)) {
         this.inMemoryCache.delete(key);
       }
+    }
+  }
+
+  private async clearUserEndpointCache(
+    username: string,
+    endpoints: EndpointName[],
+  ): Promise<void> {
+    for (const [key, value] of this.inMemoryCache.entries()) {
+      if (value.username !== username && !key.startsWith(`${username}:`)) {
+        continue;
+      }
+
+      if (endpoints.some((endpoint) => key.startsWith(`${username}:${endpoint}`))) {
+        this.inMemoryCache.delete(key);
+      }
+    }
+
+    if (this.mongoStorage) {
+      await this.mongoStorage.clearUserEndpointCache(username, endpoints);
     }
   }
 

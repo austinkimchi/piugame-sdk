@@ -47,8 +47,8 @@ async function main(): Promise<void> {
   const ssoTimeoutMsParsed = ssoTimeoutMsRaw ? Number(ssoTimeoutMsRaw) : undefined;
   const ssoTimeoutMs =
     typeof ssoTimeoutMsParsed === "number" &&
-    Number.isFinite(ssoTimeoutMsParsed) &&
-    ssoTimeoutMsParsed > 0
+      Number.isFinite(ssoTimeoutMsParsed) &&
+      ssoTimeoutMsParsed > 0
       ? ssoTimeoutMsParsed
       : undefined;
 
@@ -84,7 +84,9 @@ async function main(): Promise<void> {
 
     // mark("get-title");
     // const titles = await client.getTitle(username);
-    // console.log("Titles:", titles);
+    // const ownedTitles = titles.filter((t) => t.owned);
+    // console.log("Owned Titles:", ownedTitles.map((t) => t.name).join("\n"));
+
   } catch (error) {
     if (debug) {
       const typed = error as {

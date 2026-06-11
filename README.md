@@ -11,10 +11,12 @@ SDK package for Pump It Up (ANDAMIRO).
   - recent plays
   - top pumbility-contributing plays
   - titles
+  - title updates
   - top score history
 - Optional MongoDB persistence for:
   - session cookies (TTL)
   - response cache (TTL)
+  - title catalog metadata
 - Multi-user support (per-username sessions, locks, and cache keys)
 
 ## Install
@@ -50,6 +52,7 @@ console.log(profile.gameIdTag, profile.rating);
 - `getRecentPlays(username)`
 - `getTopPlays(username)`
 - `getTitle(username)`
+- `setTitle(username, titleName)`
 - `refresh(username)`
 - `fetchAllPlays(username)`
 - `setDatabase(mongoUri)`
@@ -58,7 +61,7 @@ console.log(profile.gameIdTag, profile.rating);
 
 Also exported for convenience:
 
-- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays`, `get_title`, `refresh`, `fetch_all_plays`, `set_database`
+- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays`, `get_title`, `set_title`, `refresh`, `fetch_all_plays`, `set_database`
 
 ## MongoDB Cache + Session Persistence
 
@@ -72,6 +75,10 @@ Stored collections:
 - `piugame_sdk.cache`
   - keyed by cache key (`username:endpoint[:suffix]`)
   - TTL index on `expiresAt`
+- `piugame_sdk.titles`
+  - keyed by normalized title name
+  - stores title name, unlock description, and last update time
+  - no TTL; refreshed from freshly scraped title pages
 
 ### Multi-user / concurrency
 

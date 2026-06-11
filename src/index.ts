@@ -5,6 +5,7 @@ import type {
   RecentPlay,
   TopPlay,
   TitleEntry,
+  TitleUpdateResult,
 } from "./types";
 
 export { PiuClient } from "./client";
@@ -16,6 +17,7 @@ export {
   SSOAutomationError,
   SessionExpiredError,
   SSORequiredError,
+  TitleUpdateError,
 } from "./errors";
 export type {
   BestPlay,
@@ -32,6 +34,7 @@ export type {
   StoredSession,
   TopPlay,
   TitleEntry,
+  TitleUpdateResult,
   TransportRequest,
   TransportResponse,
 } from "./types";
@@ -64,6 +67,10 @@ export async function get_top_plays(username: string): Promise<TopPlay[]> {
 
 export async function get_title(username: string): Promise<TitleEntry[]> {
   return defaultClient.getTitle(username);
+}
+
+export async function set_title(username: string, titleName: string): Promise<TitleUpdateResult> {
+  return defaultClient.setTitle(username, titleName);
 }
 
 export async function refresh(username: string): Promise<PlayerData> {

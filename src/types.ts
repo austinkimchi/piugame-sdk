@@ -88,6 +88,7 @@ export interface TopPlay {
 export interface TitleEntry {
   name: string;
   description: string | null;
+  setToken: string | null;
   className: string;
   owned: boolean;
   locked: boolean;
@@ -95,6 +96,14 @@ export interface TitleEntry {
   settable: boolean;
   unlockable: boolean;
   statusText: string | null;
+}
+
+export interface TitleUpdateResult {
+  username: string;
+  titleName: string;
+  success: boolean;
+  message: string | null;
+  titles: TitleEntry[];
 }
 
 export interface BestPlay {

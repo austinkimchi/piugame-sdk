@@ -1,6 +1,6 @@
 ﻿import { MongoClient, type Collection } from "mongodb";
 
-import type { EndpointName, SerializableCookie, StoredSession } from "../types";
+import type { EndpointName, SerializableCookie, StoredSession, TitleEntry } from "../types";
 
 interface SessionDocument {
   username: string;
@@ -18,10 +18,18 @@ interface CacheDocument {
   updatedAt: Date;
 }
 
+interface TitleCatalogDocument {
+  normalizedName: string;
+  name: string;
+  description: string | null;
+  updatedAt: Date;
+}
+
 export class MongoStorage {
   private readonly client: MongoClient;
   private readonly sessions: Collection<SessionDocument>;
   private readonly cache: Collection<CacheDocument>;
+  private readonly titles: Collection<TitleCatalogDocument>;
 
   private constructor(client: MongoClient) {
     this.client = client;
@@ -29,6 +37,7 @@ export class MongoStorage {
     const db = this.client.db("piugame_sdk");
     this.sessions = db.collection<SessionDocument>("sessions");
     this.cache = db.collection<CacheDocument>("cache");
+    this.titles = db.collection<TitleCatalogDocument>("titles");
   }
 
   public static async connect(uri: string): Promise<MongoStorage> {
@@ -113,8 +122,39 @@ export class MongoStorage {
     await this.cache.deleteMany({ username });
   }
 
+  public async clearUserEndpointCache(
+    username: string,
+    endpoints: EndpointName[],
+  ): Promise<void> {
+    await this.cache.deleteMany({ username, endpoint: { $in: endpoints } });
+  }
+
   public async clearUser(username: string): Promise<void> {
     await Promise.all([this.clearSession(username), this.clearUserCache(username)]);
+  }
+
+  public async upsertTitleCatalog(titles: TitleEntry[]): Promise<void> {
+    if (titles.length === 0) {
+      return;
+    }
+
+    const updatedAt = new Date();
+    await this.titles.bulkWrite(
+      titles.map((title) => ({
+        updateOne: {
+          filter: { normalizedName: normalizeTitleName(title.name) },
+          update: {
+            $set: {
+              normalizedName: normalizeTitleName(title.name),
+              name: title.name,
+              description: title.description,
+              updatedAt,
+            },
+          },
+          upsert: true,
+        },
+      })),
+    );
   }
 
   private async ensureIndexes(): Promise<void> {
@@ -124,5 +164,11 @@ export class MongoStorage {
     await this.cache.createIndex({ key: 1 }, { unique: true });
     await this.cache.createIndex({ username: 1 });
     await this.cache.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+    await this.titles.createIndex({ normalizedName: 1 }, { unique: true });
   }
+}
+
+function normalizeTitleName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
 }

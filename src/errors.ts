@@ -55,3 +55,9 @@ export class NetworkError extends PiuError {
     this.status = status;
   }
 }
+
+export class TitleUpdateError extends PiuError {
+  public constructor(message = "Unable to update title.", options?: { cause?: unknown }) {
+    super("TITLE_UPDATE_FAILED", message, options);
+  }
+}

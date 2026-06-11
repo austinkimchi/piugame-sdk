@@ -6,6 +6,7 @@ import {
   SSOAutomationError,
   SessionExpiredError,
   SSORequiredError,
+  TitleUpdateError,
 } from "../src/errors";
 import type { HttpTransport, TransportRequest, TransportResponse } from "../src/types";
 
@@ -81,6 +82,63 @@ const PUMBILITY_TOP_HTML = `
   </ul>
 </div>
 `;
+
+function titleHtml(activeTitle: "CONRAD FOLLOWER" | "SUNNY FOLLOWER" = "CONRAD FOLLOWER"): string {
+  const conradInUse = activeTitle === "CONRAD FOLLOWER";
+  const sunnyInUse = activeTitle === "SUNNY FOLLOWER";
+
+  return `
+  <div class="board_search"><div class="total_wrap"><span class="t2">2</span></div></div>
+  <ul class="data_titleList2">
+    <li class="have" data-name="CONRAD FOLLOWER">
+      <div class="txt_w"><div class="txt">CONRAD FOLLOWER</div></div>
+      <div class="state_w">
+        ${
+          conradInUse
+            ? '<button type="button" class="stateBox"><i class="tt">Title in use</i></button>'
+            : `<form action="https://www.piugame.com/logic/user_title_update.php" method="post">
+                <input type="hidden" name="no" value="conrad-token" />
+                <button type="submit" class="stateBox"><i class="tt">Set</i></button>
+              </form>`
+        }
+      </div>
+      <div class="txt_w2"><div class="txt">Follower title</div></div>
+    </li>
+    <li class="have" data-name="SUNNY FOLLOWER">
+      <div class="txt_w"><div class="txt">SUNNY FOLLOWER</div></div>
+      <div class="state_w">
+        ${
+          sunnyInUse
+            ? '<button type="button" class="stateBox"><i class="tt">Title in use</i></button>'
+            : `<form action="https://www.piugame.com/logic/user_title_update.php" method="post">
+                <input type="hidden" name="no" value="L2JXVVZ0NDYwSm1CbFZiemNad2lBUT09" />
+                <button type="submit" class="stateBox"><i class="tt">Set</i></button>
+              </form>`
+        }
+      </div>
+      <div class="txt_w2"><div class="txt">[SUNNY STEP] 100+ Plays</div></div>
+    </li>
+    <li class="not" data-name="LOCKED TITLE">
+      <div class="txt_w"><div class="txt">LOCKED TITLE</div></div>
+      <div class="state_w"><button type="button" class="stateBox"><i class="tt">Not achieving the unlock condition</i></button></div>
+      <div class="txt_w2"><div class="txt">Locked condition</div></div>
+    </li>
+    <li class="have" data-name="BEGINNER">
+      <div class="txt_w"><div class="txt">BEGINNER</div></div>
+      <div class="state_w">
+        <form action="https://www.piugame.com/logic/user_title_update.php" method="post">
+          <input type="hidden" name="no" value="cU1zQktpTE84SWZPSTNIbkpKSytNUT09" />
+          <button type="submit" class="stateBox"><i class="tt">Set</i></button>
+        </form>
+      </div>
+    </li>
+  </ul>
+  `;
+}
+
+function playerDataHtmlWithTitle(titleName: string): string {
+  return PLAY_DATA_HTML.replace("CONRAD FOLLOWER", titleName);
+}
 
 function response(
   status: number,
@@ -967,5 +1025,222 @@ describe("PiuClient session manager", () => {
     expect(profileB.username).toBe("user_b");
     expect(seenPlayDataCookies.some((cookie) => cookie.includes("sid=user_a"))).toBe(true);
     expect(seenPlayDataCookies.some((cookie) => cookie.includes("sid=user_b"))).toBe(true);
+  });
+
+  test("getTitle always refreshes live user title state", async () => {
+    let titleCalls = 0;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/title.php") {
+        titleCalls += 1;
+        return response(200, titleHtml(titleCalls === 1 ? "CONRAD FOLLOWER" : "SUNNY FOLLOWER"), {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({
+      transport,
+      cacheTtl: { titleMs: 60 * 60 * 1000 },
+    });
+    await client.login("fixture_user", "fixture_password");
+
+    const first = await client.getTitle("fixture_user");
+    const second = await client.getTitle("fixture_user");
+
+    expect(titleCalls).toBe(2);
+    expect(first.find((title) => title.name === "CONRAD FOLLOWER")?.inUse).toBe(true);
+    expect(second.find((title) => title.name === "SUNNY FOLLOWER")?.inUse).toBe(true);
+  });
+
+  test("getTitle upserts durable title catalog metadata when Mongo is connected", async () => {
+    const upsertedCatalogs: unknown[][] = [];
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/title.php") {
+        return response(200, titleHtml("CONRAD FOLLOWER"), {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+    (client as any).mongoStorage = {
+      getSession: async () => null,
+      setSession: async () => undefined,
+      upsertTitleCatalog: async (titles: unknown[]) => {
+        upsertedCatalogs.push(titles);
+      },
+    };
+
+    await client.login("fixture_user", "fixture_password");
+    await client.getTitle("fixture_user");
+
+    expect(upsertedCatalogs).toHaveLength(1);
+    expect(upsertedCatalogs[0]).toMatchObject([
+      { name: "CONRAD FOLLOWER", description: "Follower title" },
+      { name: "SUNNY FOLLOWER", description: "[SUNNY STEP] 100+ Plays" },
+      { name: "LOCKED TITLE", description: "Locked condition" },
+      { name: "BEGINNER", description: null },
+    ]);
+  });
+
+  test("setTitle posts the title token, refreshes titles, and clears profile cache", async () => {
+    let titleSet = false;
+    let postedBody: string | undefined;
+    let postedContentType: string | undefined;
+    let postedOrigin: string | undefined;
+    let postedReferer: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(
+          200,
+          playerDataHtmlWithTitle(titleSet ? "SUNNY FOLLOWER" : "CONRAD FOLLOWER"),
+          {},
+        );
+      }
+
+      if (url.pathname === "/my_page/pumbility.php") {
+        return response(200, PUMBILITY_SCORE_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/title.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, titleHtml(titleSet ? "SUNNY FOLLOWER" : "CONRAD FOLLOWER"), {});
+      }
+
+      if (url.pathname === "/logic/user_title_update.php") {
+        postedBody = request.body;
+        postedContentType = request.headers["content-type"];
+        postedOrigin = request.headers.origin;
+        postedReferer = request.headers.referer;
+        titleSet = true;
+        return response(200, "<script>alert('Title has been changed.')</script>", {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+    await client.login("fixture_user", "fixture_password");
+
+    const before = await client.getPlayerData("fixture_user");
+    expect(before.titleName).toBe("CONRAD FOLLOWER");
+
+    const result = await client.setTitle("fixture_user", "sunny follower");
+
+    expect(postedBody).toBe("no=L2JXVVZ0NDYwSm1CbFZiemNad2lBUT09");
+    expect(postedContentType).toBe("application/x-www-form-urlencoded");
+    expect(postedOrigin).toBe("https://www.piugame.com");
+    expect(postedReferer).toBe("https://www.piugame.com/my_page/title.php");
+    expect(result.success).toBe(true);
+    expect(result.titleName).toBe("SUNNY FOLLOWER");
+    expect(result.titles.find((title) => title.name === "SUNNY FOLLOWER")?.inUse).toBe(true);
+
+    const after = await client.getPlayerData("fixture_user");
+    expect(after.titleName).toBe("SUNNY FOLLOWER");
+  });
+
+  test("setTitle rejects unavailable titles before posting", async () => {
+    let postCalls = 0;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/title.php") {
+        return response(200, titleHtml("CONRAD FOLLOWER"), {});
+      }
+
+      if (url.pathname === "/logic/user_title_update.php") {
+        postCalls += 1;
+        return response(200, "unexpected", {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+    await client.login("fixture_user", "fixture_password");
+
+    await expect(client.setTitle("fixture_user", "LOCKED TITLE")).rejects.toBeInstanceOf(
+      TitleUpdateError,
+    );
+    await expect(client.setTitle("fixture_user", "CONRAD FOLLOWER")).rejects.toBeInstanceOf(
+      TitleUpdateError,
+    );
+    await expect(client.setTitle("fixture_user", "MISSING TITLE")).rejects.toBeInstanceOf(
+      TitleUpdateError,
+    );
+    expect(postCalls).toBe(0);
   });
 });
