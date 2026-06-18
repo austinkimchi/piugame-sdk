@@ -74,7 +74,7 @@ describeIntegration("integration login (.env)", () => {
     120_000,
   );
 
-  test(
+  test.concurrent(
     "login succeeds and allows get_player_data",
     async () => {
       const client = createClient();
@@ -105,7 +105,7 @@ describeIntegration("integration login (.env)", () => {
     120_000,
   );
 
-  test(
+  test.concurrent(
     "session invalidation triggers automatic relogin on next getter call",
     async () => {
       const client = createClient();
@@ -143,6 +143,8 @@ describeIntegration("integration login (.env)", () => {
     120_000,
   );
 
+  // Keep this test isolated from concurrent auth flows because repeated bad credentials
+  // can trigger provider-side throttling/session effects on shared test accounts.
   test(
     "invalid credentials produce AuthenticationError (not generic failure)",
     async () => {
