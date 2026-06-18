@@ -1597,27 +1597,30 @@ export class PiuClient {
         timeout: this.ssoTimeoutMs,
       });
 
-      await this.waitForSsoEntryReadiness(context, page);
-      const submitResult = await this.trySubmitSsoCredentials(page, credentials);
-      const browserCookies = await this.waitForSsoSessionReadiness(
-        context,
-        page,
-        submitResult.submitted,
-        submitResult.loginResponse,
-      );
+      const browserCookies = await this.waitForSsoBootstrapCookies(context, page);
       const mappedCookies = this.mapBrowserCookiesToSessionCookies(browserCookies);
 
       if (mappedCookies.length === 0) {
-        throw new SSOAutomationError("Automatic SSO finished without PIUGAME session cookies.");
+        throw new SSOAutomationError("Automatic SSO finished without PIUGAME bootstrap cookies.");
       }
 
       const session = this.sessions.get(username) ?? this.createSession(username);
       session.cookies = mappedCookies;
-      session.lastValidatedAt = Date.now();
+      session.lastValidatedAt = 0;
       session.expiresAt = this.deriveSessionExpiry(mappedCookies);
 
       this.sessions.set(username, session);
       await this.persistSession(username);
+
+      await browser.close();
+      browser = null;
+
+      const secondLoginResponse = await this.sendLoginRequest(username, credentials);
+      await this.applyLoginResponseToSession(
+        username,
+        secondLoginResponse,
+        this.extractLocation(secondLoginResponse),
+      );
     } catch (error) {
       if (error instanceof AuthenticationError || error instanceof SSOAutomationError) {
         throw error;
@@ -1632,6 +1635,28 @@ export class PiuClient {
         await browser.close();
       }
     }
+  }
+
+  protected async waitForSsoBootstrapCookies(context: any, page: any): Promise<BrowserCookie[]> {
+    const deadline = Date.now() + this.ssoTimeoutMs;
+
+    while (Date.now() < deadline) {
+      const cookies = await this.getBaseHostBrowserCookies(context);
+      const pageUrl = this.getPageUrl(page);
+      if (
+        cookies.length > 0 &&
+        this.isUrlWithinBaseHost(pageUrl) &&
+        !this.isLoginPageUrl(pageUrl)
+      ) {
+        return cookies;
+      }
+
+      await this.waitForSsoPoll(page, deadline);
+    }
+
+    throw new SSOAutomationError(
+      "Automatic SSO did not return PIUGAME bootstrap cookies before timeout.",
+    );
   }
 
   private async trySubmitSsoCredentials(

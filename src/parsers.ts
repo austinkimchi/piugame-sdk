@@ -12,9 +12,87 @@ import type {
 } from "./types";
 
 const NUMBER_PATTERN = /-?\d[\d,]*/;
+const TITLE_ENTRY_PATTERN = /<li\b([^>]*)>([\s\S]*?)<\/li>/gi;
+const ATTRIBUTE_PATTERN = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+const HTML_ENTITY_PATTERN = /&(#x[\da-f]+|#\d+|[a-z]+);/gi;
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: "&",
+  apos: "'",
+  gt: ">",
+  lt: "<",
+  nbsp: " ",
+  quot: "\"",
+};
 
 function cleanText(value: string | undefined | null): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value.replace(HTML_ENTITY_PATTERN, (entityText: string, entity: string) => {
+    const normalized = entity.toLowerCase();
+    if (normalized.startsWith("#x")) {
+      const codePoint = Number.parseInt(normalized.slice(2), 16);
+      return isValidCodePoint(codePoint) ? String.fromCodePoint(codePoint) : entityText;
+    }
+
+    if (normalized.startsWith("#")) {
+      const codePoint = Number.parseInt(normalized.slice(1), 10);
+      return isValidCodePoint(codePoint) ? String.fromCodePoint(codePoint) : entityText;
+    }
+
+    return HTML_ENTITY_MAP[normalized] ?? entityText;
+  });
+}
+
+function isValidCodePoint(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 0x10ffff;
+}
+
+function cleanHtmlText(value: string | undefined | null): string {
+  return cleanText(decodeHtmlEntities((value ?? "").replace(/<[^>]*>/g, " ")));
+}
+
+function parseHtmlAttributes(value: string): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  ATTRIBUTE_PATTERN.lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = ATTRIBUTE_PATTERN.exec(value)) !== null) {
+    attributes[match[1].toLowerCase()] = decodeHtmlEntities(match[2] ?? match[3] ?? match[4] ?? "");
+  }
+
+  return attributes;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractClassHtml(html: string, className: string): string | null {
+  const pattern = new RegExp(
+    `<([a-z][\\w:-]*)\\b(?=[^>]*\\bclass=(["'])[^"']*\\b${escapeRegex(className)}\\b[^"']*\\2)[^>]*>([\\s\\S]*?)<\\/\\1>`,
+    "i",
+  );
+  return pattern.exec(html)?.[3] ?? null;
+}
+
+function extractClassText(html: string, className: string): string {
+  return cleanHtmlText(extractClassHtml(html, className));
+}
+
+function extractInputValue(html: string, inputName: string): string | null {
+  const inputPattern = /<input\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = inputPattern.exec(html)) !== null) {
+    const attributes = parseHtmlAttributes(match[1]);
+    if ((attributes.name ?? "").toLowerCase() === inputName.toLowerCase()) {
+      return cleanText(attributes.value);
+    }
+  }
+
+  return null;
 }
 
 function normalizeGameIdTag(value: string | undefined | null): string | null {
@@ -341,29 +419,28 @@ function normalizeTitleStatus(statusText: string | null): {
 }
 
 export function parseTitleEntries(html: string): TitleEntry[] {
-  const $ = load(html);
-  const entries = $(".data_titleList2 > li");
-
-  if (entries.length === 0) {
+  const results: TitleEntry[] = [];
+  const titleListHtml = extractClassHtml(html, "data_titleList2");
+  if (!titleListHtml) {
     throw new ParseError("parseTitleEntries", "Could not find title entries.");
   }
 
-  const results: TitleEntry[] = [];
-
-  entries.each((_, entry) => {
-    const root = $(entry);
-    const className = cleanText(root.attr("class"));
-    const statusText = cleanText(root.find(".state_w .stateBox .tt").first().text()) || null;
+  TITLE_ENTRY_PATTERN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = TITLE_ENTRY_PATTERN.exec(titleListHtml)) !== null) {
+    const attributes = parseHtmlAttributes(match[1]);
+    const entryHtml = match[2];
+    const className = cleanText(attributes.class);
+    const titleText = extractClassText(entryHtml, "txt_w");
+    const descriptionText = extractClassText(entryHtml, "txt_w2");
+    const statusText = cleanHtmlText(extractClassHtml(entryHtml, "state_w")) || null;
     const status = normalizeTitleStatus(statusText);
     const owned = className.split(/\s+/).includes("have");
 
     results.push({
-      name:
-        cleanText(root.attr("data-name")) ||
-        cleanText(root.find(".txt_w .txt").first().text()) ||
-        "Unknown",
-      description: cleanText(root.find(".txt_w2 .txt").first().text()) || null,
-      setToken: cleanText(root.find('input[name="no"]').first().attr("value")) || null,
+      name: cleanText(attributes["data-name"]) || titleText || "Unknown",
+      description: descriptionText || null,
+      setToken: extractInputValue(entryHtml, "no"),
       className,
       owned,
       locked: !owned || status.lockedByText,
@@ -372,7 +449,11 @@ export function parseTitleEntries(html: string): TitleEntry[] {
       unlockable: status.unlockable,
       statusText,
     });
-  });
+  }
+
+  if (results.length === 0) {
+    throw new ParseError("parseTitleEntries", "Could not find title entries.");
+  }
 
   return results;
 }

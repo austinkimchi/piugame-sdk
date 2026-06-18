@@ -1,4 +1,4 @@
-﻿import { describe, test, expect } from "vitest";
+﻿import { afterEach, describe, test, expect, vi } from "vitest";
 
 import { PiuClient } from "../src/client";
 import {
@@ -213,6 +213,10 @@ class SsoReadinessClient extends PiuClient {
   public async waitForEntry(context: any, page: any): Promise<void> {
     await this.waitForSsoEntryReadiness(context, page);
   }
+
+  public async waitForBootstrap(context: any, page: any): Promise<unknown[]> {
+    return this.waitForSsoBootstrapCookies(context, page);
+  }
 }
 
 function browserSessionCookie(): unknown {
@@ -226,6 +230,43 @@ function browserSessionCookie(): unknown {
     httpOnly: true,
   };
 }
+
+function mockPlaywrightForSso(cookies: unknown[]): {
+  browserCloseCalls: () => number;
+  gotoCalls: () => number;
+} {
+  let browserCloseCalls = 0;
+  let gotoCalls = 0;
+
+  vi.doMock("playwright", () => ({
+    chromium: {
+      launch: async () => ({
+        newContext: async () => ({
+          cookies: async () => cookies,
+          newPage: async () => ({
+            goto: async () => {
+              gotoCalls += 1;
+            },
+            url: () => "https://www.piugame.com/",
+            waitForTimeout: async () => undefined,
+          }),
+        }),
+        close: async () => {
+          browserCloseCalls += 1;
+        },
+      }),
+    },
+  }));
+
+  return {
+    browserCloseCalls: () => browserCloseCalls,
+    gotoCalls: () => gotoCalls,
+  };
+}
+
+afterEach(() => {
+  vi.doUnmock("playwright");
+});
 
 describe("PiuClient session manager", () => {
   test("valid session path keeps login count stable", async () => {
@@ -671,6 +712,123 @@ describe("PiuClient session manager", () => {
     expect(loginCalls).toBe(1);
   });
 
+  test("hybrid SSO hydrates bootstrap cookies and completes login through transport", async () => {
+    const playDataHtml = PLAY_DATA_HTML;
+    let loginCalls = 0;
+    let secondLoginSawBootstrapCookie = false;
+    const playwright = mockPlaywrightForSso([
+      {
+        ...(browserSessionCookie() as Record<string, unknown>),
+        value: "bootstrap",
+      },
+    ]);
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        loginCalls += 1;
+
+        if (loginCalls === 1) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        secondLoginSawBootstrapCookie = request.headers.cookie?.includes("sid=bootstrap") ?? false;
+        if (!secondLoginSawBootstrapCookie) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, playDataHtml);
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+
+    await client.login("fixture_user", "fixture_password");
+    const data = await client.getPlayerData("fixture_user");
+
+    expect(data.username).toBe("fixture_user");
+    expect(loginCalls).toBe(2);
+    expect(secondLoginSawBootstrapCookie).toBe(true);
+    expect(playwright.gotoCalls()).toBe(1);
+    expect(playwright.browserCloseCalls()).toBe(1);
+  });
+
+  test("hybrid SSO maps bad second login credentials to AuthenticationError", async () => {
+    mockPlaywrightForSso([browserSessionCookie()]);
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location:
+            request.headers.cookie?.includes("sid=mocksid")
+              ? "/bbs/login.php?url=%2F"
+              : "https://api.am-pass.net/sso?redirect=piu",
+        });
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+
+    await expect(client.login("fixture_user", "bad_password")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
+  });
+
+  test("hybrid SSO repeated redirect after second login returns SSORequiredError", async () => {
+    mockPlaywrightForSso([browserSessionCookie()]);
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "https://api.am-pass.net/sso?redirect=piu",
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(302, "", {
+          location: "https://api.am-pass.net/sso?redirect=piu",
+        });
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+
+    await expect(client.login("fixture_user", "fixture_password")).rejects.toBeInstanceOf(
+      SSORequiredError,
+    );
+  });
+
   test("resolver failure returns SSOAutomationError", async () => {
     const transport: HttpTransport = async (request) => {
       const url = new URL(request.url);
@@ -750,6 +908,49 @@ describe("PiuClient session manager", () => {
     expect(cookies).toHaveLength(1);
     expect(cookieReads).toBe(2);
     expect(pollCalls).toBe(1);
+  });
+
+  test("SSO bootstrap readiness resolves from PIUGAME cookies on base host", async () => {
+    let cookieReads = 0;
+    let pollCalls = 0;
+    let pageUrl = "https://api.am-pass.net/sso";
+    const client = new SsoReadinessClient({ ssoTimeoutMs: 500 });
+    const context = {
+      cookies: async () => {
+        cookieReads += 1;
+        return cookieReads >= 2 ? [browserSessionCookie()] : [];
+      },
+    };
+    const page = {
+      url: () => pageUrl,
+      waitForTimeout: async () => {
+        pollCalls += 1;
+        pageUrl = "https://www.piugame.com/bbs/login_check.php";
+      },
+    };
+
+    const cookies = await client.waitForBootstrap(context, page);
+
+    expect(cookies).toHaveLength(1);
+    expect(cookieReads).toBe(2);
+    expect(pollCalls).toBe(1);
+  });
+
+  test("SSO bootstrap readiness times out when PIUGAME cookies never arrive", async () => {
+    const client = new SsoReadinessClient({ ssoTimeoutMs: 5 });
+    const context = {
+      cookies: async () => [],
+    };
+    const page = {
+      url: () => "https://www.piugame.com/",
+      waitForTimeout: async (timeoutMs: number) => {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, timeoutMs));
+      },
+    };
+
+    await expect(client.waitForBootstrap(context, page)).rejects.toBeInstanceOf(
+      SSOAutomationError,
+    );
   });
 
   test("SSO readiness timeout remains an automation error when cookies never arrive", async () => {

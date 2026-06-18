@@ -82,10 +82,10 @@ async function main(): Promise<void> {
     // const recentPlays = await client.getRecentPlays(username);
     // console.log("Recent Plays:", recentPlays);
 
-    // mark("get-title");
-    // const titles = await client.getTitle(username);
-    // const ownedTitles = titles.filter((t) => t.owned);
-    // console.log("Owned Titles:", ownedTitles.map((t) => t.name).join("\n"));
+    mark("get-title");
+    const titles = await client.getTitle(username);
+    const ownedTitles = titles.filter((t) => t.owned);
+    console.log("Owned Titles:", ownedTitles.map((t) => t.name).join("\n"));
 
   } catch (error) {
     if (debug) {
