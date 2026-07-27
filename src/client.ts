@@ -29,6 +29,7 @@ import type {
   EndpointName,
   FetchAllPlaysResult,
   HttpTransport,
+  PiuGameVersion,
   PlayerData,
   PiuClientOptions,
   RecentPlay,
@@ -67,6 +68,7 @@ interface CacheEntry {
   payload: string;
   expiresAt: number;
   username: string;
+  endpoint: EndpointName;
 }
 
 interface EnsureAuthOptions {
@@ -97,7 +99,12 @@ interface SsoSubmitResult {
   loginResponse: Promise<void> | null;
 }
 
-const DEFAULT_BASE_URL = "https://www.piugame.com";
+const PIU_VERSION_BASE_URLS: Record<PiuGameVersion, string> = {
+  phoenix: "https://phoenix.piugame.com",
+  phoenix2: "https://www.piugame.com",
+};
+const DEFAULT_PIU_VERSION: PiuGameVersion = "phoenix";
+const DEFAULT_BASE_URL = PIU_VERSION_BASE_URLS[DEFAULT_PIU_VERSION];
 const LOGIN_PATH = "/bbs/login_check.php";
 const LOGOUT_PATH = "/bbs/logout.php";
 const AUTH_PROBE_PATH = "/my_page/play_data.php";
@@ -212,10 +219,15 @@ function normalizeTitleName(value: string): string {
 function isPiuHost(baseUrl: string): boolean {
   try {
     const host = new URL(baseUrl).hostname.toLowerCase();
-    return host === "piugame.com" || host === "www.piugame.com" || host.endsWith(".piugame.com");
+    return isKnownPiuHostname(host);
   } catch {
     return false;
   }
+}
+
+function isKnownPiuHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "piugame.com" || host === "www.piugame.com" || host.endsWith(".piugame.com");
 }
 
 function isTlsCertificateValidationError(error: unknown): boolean {
@@ -340,6 +352,22 @@ function absoluteUrl(baseUrl: string, path: string): string {
 
 function originFromBaseUrl(baseUrl: string): string {
   return new URL(baseUrl).origin;
+}
+
+function resolveBaseUrl(options: PiuClientOptions): string {
+  return options.baseUrl ?? PIU_VERSION_BASE_URLS[options.version ?? DEFAULT_PIU_VERSION];
+}
+
+function cacheNamespaceFromBaseUrl(baseUrl: string): string {
+  const origin = originFromBaseUrl(baseUrl);
+  if (origin === originFromBaseUrl(PIU_VERSION_BASE_URLS.phoenix)) {
+    return "phoenix";
+  }
+  if (origin === originFromBaseUrl(PIU_VERSION_BASE_URLS.phoenix2)) {
+    return "phoenix2";
+  }
+
+  return origin;
 }
 
 function isRedirectStatus(status: number): boolean {
@@ -494,6 +522,7 @@ function createDefaultTransport(
 
 export class PiuClient {
   private readonly baseUrl: string;
+  private readonly cacheNamespace: string;
   private readonly timeoutMs: number;
   private readonly cacheTtl: CacheTtlConfig;
   private readonly userAgent: string;
@@ -515,7 +544,8 @@ export class PiuClient {
   private mongoStorage: MongoStorage | null = null;
 
   public constructor(options: PiuClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+    this.baseUrl = resolveBaseUrl(options);
+    this.cacheNamespace = cacheNamespaceFromBaseUrl(this.baseUrl);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.cacheTtl = {
       ...DEFAULT_TTL,
@@ -559,16 +589,11 @@ export class PiuClient {
     }
 
     for (const [key, entry] of this.inMemoryCache.entries()) {
-      const endpointPart = key.split(":")[1] as EndpointName | undefined;
-      if (!endpointPart) {
-        continue;
-      }
-
       const ttlMs = Math.max(1, entry.expiresAt - Date.now());
       await this.mongoStorage.setCache(
         key,
         entry.username,
-        endpointPart,
+        entry.endpoint,
         entry.payload,
         new Date(Date.now() + ttlMs),
       );
@@ -740,7 +765,7 @@ export class PiuClient {
   public async refresh(username: string): Promise<PlayerData> {
     this.clearUserInMemoryCache(username);
     if (this.mongoStorage) {
-      await this.mongoStorage.clearUserCache(username);
+      await this.mongoStorage.clearUserCache(username, this.userCacheKeyPrefix(username));
     }
 
     await this.ensureAuthenticated(username, { force: true });
@@ -921,7 +946,7 @@ export class PiuClient {
   }
 
   private buildCacheKey(username: string, endpoint: EndpointName, suffix?: string): string {
-    return `${username}:${endpoint}${suffix ?? ""}`;
+    return `${this.cacheNamespace}:${username}:${endpoint}${suffix ?? ""}`;
   }
 
   private async readCache<T>(key: string): Promise<T | null> {
@@ -960,6 +985,7 @@ export class PiuClient {
       payload: serialized,
       expiresAt,
       username,
+      endpoint,
     });
 
     if (this.mongoStorage) {
@@ -975,7 +1001,7 @@ export class PiuClient {
 
   private clearUserInMemoryCache(username: string): void {
     for (const [key, value] of this.inMemoryCache.entries()) {
-      if (value.username === username || key.startsWith(`${username}:`)) {
+      if (value.username === username && key.startsWith(`${this.cacheNamespace}:${username}:`)) {
         this.inMemoryCache.delete(key);
       }
     }
@@ -986,18 +1012,26 @@ export class PiuClient {
     endpoints: EndpointName[],
   ): Promise<void> {
     for (const [key, value] of this.inMemoryCache.entries()) {
-      if (value.username !== username && !key.startsWith(`${username}:`)) {
+      if (value.username !== username || !key.startsWith(`${this.cacheNamespace}:${username}:`)) {
         continue;
       }
 
-      if (endpoints.some((endpoint) => key.startsWith(`${username}:${endpoint}`))) {
+      if (endpoints.includes(value.endpoint)) {
         this.inMemoryCache.delete(key);
       }
     }
 
     if (this.mongoStorage) {
-      await this.mongoStorage.clearUserEndpointCache(username, endpoints);
+      await this.mongoStorage.clearUserEndpointCache(
+        username,
+        endpoints,
+        this.userCacheKeyPrefix(username),
+      );
     }
+  }
+
+  private userCacheKeyPrefix(username: string): string {
+    return `${this.cacheNamespace}:${username}:`;
   }
 
   private async ensureSongImagesFromRecentPlays(plays: RecentPlay[]): Promise<void> {
@@ -1876,6 +1910,10 @@ export class PiuClient {
     try {
       const baseHost = new URL(this.baseUrl).hostname.toLowerCase();
       const targetHost = new URL(urlText).hostname.toLowerCase();
+      if (isKnownPiuHostname(baseHost) && isKnownPiuHostname(targetHost)) {
+        return true;
+      }
+
       const normalizedBase = baseHost.startsWith("www.") ? baseHost.slice(4) : baseHost;
       const normalizedTarget = targetHost.startsWith("www.") ? targetHost.slice(4) : targetHost;
       return (

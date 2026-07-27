@@ -28,6 +28,7 @@ export type {
   HttpTransport,
   JudgmentCounts,
   PiuClientOptions,
+  PiuGameVersion,
   PlayerData,
   RecentPlay,
   SerializableCookie,

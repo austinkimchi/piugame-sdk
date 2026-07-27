@@ -13,8 +13,11 @@ export interface CacheTtlConfig {
   topPlaysMs: number;
 }
 
+export type PiuGameVersion = "phoenix" | "phoenix2";
+
 export interface PiuClientOptions {
   baseUrl?: string;
+  version?: PiuGameVersion;
   timeoutMs?: number;
   cacheTtl?: Partial<CacheTtlConfig>;
   userAgent?: string;

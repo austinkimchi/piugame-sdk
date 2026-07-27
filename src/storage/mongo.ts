@@ -118,15 +118,23 @@ export class MongoStorage {
     );
   }
 
-  public async clearUserCache(username: string): Promise<void> {
-    await this.cache.deleteMany({ username });
+  public async clearUserCache(username: string, keyPrefix?: string): Promise<void> {
+    await this.cache.deleteMany({
+      username,
+      ...(keyPrefix ? { key: { $regex: `^${escapeRegExp(keyPrefix)}` } } : {}),
+    });
   }
 
   public async clearUserEndpointCache(
     username: string,
     endpoints: EndpointName[],
+    keyPrefix?: string,
   ): Promise<void> {
-    await this.cache.deleteMany({ username, endpoint: { $in: endpoints } });
+    await this.cache.deleteMany({
+      username,
+      endpoint: { $in: endpoints },
+      ...(keyPrefix ? { key: { $regex: `^${escapeRegExp(keyPrefix)}` } } : {}),
+    });
   }
 
   public async clearUser(username: string): Promise<void> {
@@ -171,4 +179,8 @@ export class MongoStorage {
 
 function normalizeTitleName(name: string): string {
   return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -269,6 +269,112 @@ afterEach(() => {
 });
 
 describe("PiuClient session manager", () => {
+  test("defaults to Phoenix domain", async () => {
+    let requestedUrl: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        requestedUrl = request.url;
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+    await client.login("fixture_user", "fixture_password");
+
+    expect(requestedUrl).toBe("https://phoenix.piugame.com/bbs/login_check.php");
+  });
+
+  test("Phoenix 2 version targets the main PIUGAME domain", async () => {
+    let requestedUrl: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        requestedUrl = request.url;
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ version: "phoenix2", transport });
+    await client.login("fixture_user", "fixture_password");
+
+    expect(requestedUrl).toBe("https://www.piugame.com/bbs/login_check.php");
+  });
+
+  test("baseUrl overrides version", async () => {
+    let requestedUrl: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        requestedUrl = request.url;
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.example.test; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({
+      version: "phoenix2",
+      baseUrl: "https://example.test",
+      transport,
+    });
+    await client.login("fixture_user", "fixture_password");
+
+    expect(requestedUrl).toBe("https://example.test/bbs/login_check.php");
+  });
+
+  test("cache keys are version-scoped", () => {
+    const phoenixClient = new PiuClient();
+    const phoenix2Client = new PiuClient({ version: "phoenix2" });
+
+    expect((phoenixClient as any).buildCacheKey("fixture_user", "player_data")).toBe(
+      "phoenix:fixture_user:player_data",
+    );
+    expect((phoenix2Client as any).buildCacheKey("fixture_user", "player_data")).toBe(
+      "phoenix2:fixture_user:player_data",
+    );
+  });
+
   test("valid session path keeps login count stable", async () => {
     const playDataHtml = PLAY_DATA_HTML;
     const pumbilityHtml = PUMBILITY_SCORE_HTML;
@@ -1388,14 +1494,60 @@ describe("PiuClient session manager", () => {
 
     expect(postedBody).toBe("no=L2JXVVZ0NDYwSm1CbFZiemNad2lBUT09");
     expect(postedContentType).toBe("application/x-www-form-urlencoded");
-    expect(postedOrigin).toBe("https://www.piugame.com");
-    expect(postedReferer).toBe("https://www.piugame.com/my_page/title.php");
+    expect(postedOrigin).toBe("https://phoenix.piugame.com");
+    expect(postedReferer).toBe("https://phoenix.piugame.com/my_page/title.php");
     expect(result.success).toBe(true);
     expect(result.titleName).toBe("SUNNY FOLLOWER");
     expect(result.titles.find((title) => title.name === "SUNNY FOLLOWER")?.inUse).toBe(true);
 
     const after = await client.getPlayerData("fixture_user");
     expect(after.titleName).toBe("SUNNY FOLLOWER");
+  });
+
+  test("setTitle posts Phoenix 2 origin and referer when version targets Phoenix 2", async () => {
+    let titleSet = false;
+    let postedOrigin: string | undefined;
+    let postedReferer: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/title.php") {
+        return response(200, titleHtml(titleSet ? "SUNNY FOLLOWER" : "CONRAD FOLLOWER"), {});
+      }
+
+      if (url.pathname === "/logic/user_title_update.php") {
+        postedOrigin = request.headers.origin;
+        postedReferer = request.headers.referer;
+        titleSet = true;
+        return response(200, "<script>alert('Title has been changed.')</script>", {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ version: "phoenix2", transport });
+    await client.login("fixture_user", "fixture_password");
+
+    const result = await client.setTitle("fixture_user", "sunny follower");
+
+    expect(postedOrigin).toBe("https://www.piugame.com");
+    expect(postedReferer).toBe("https://www.piugame.com/my_page/title.php");
+    expect(result.success).toBe(true);
   });
 
   test("setTitle rejects unavailable titles before posting", async () => {
