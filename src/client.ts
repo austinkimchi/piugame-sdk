@@ -122,6 +122,8 @@ const SESSION_EXPIRY_FALLBACK_MS = 30 * 60 * 1000;
 const SESSION_VALIDATION_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_REDIRECT_LIMIT = 5;
 const DEFAULT_SSO_TIMEOUT_MS = 60_000;
+const DEFAULT_AUTH_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0";
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
 const TLS_FALLBACK_ENV_KEY = "PIU_TLS_FALLBACK_INSECURE";
 const SONG_ASSET_ENABLE_ENV_KEY = "PIU_SONG_ASSET_ENABLE";
@@ -530,6 +532,7 @@ export class PiuClient {
   private readonly ssoAutoResolve: boolean;
   private readonly ssoHeadless: boolean;
   private readonly ssoTimeoutMs: number;
+  private readonly speculativeSsoBootstrap: boolean;
   private readonly songAssetEnabled: boolean;
   private readonly profileAssetEnabled: boolean;
   private readonly gradePlateAssetEnabled: boolean;
@@ -562,6 +565,8 @@ export class PiuClient {
     this.ssoAutoResolve = options.ssoAutoResolve ?? true;
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
+    this.speculativeSsoBootstrap =
+      options.speculativeSsoBootstrap ?? (!options.transport && isPiuHost(this.baseUrl));
     this.songAssetEnabled =
       parseBooleanEnvFromKeys(
         SONG_ASSET_ENABLE_ENV_KEY,
@@ -639,14 +644,18 @@ export class PiuClient {
       endpoint: "player_data",
       cacheTtlMs: this.cacheTtl.playerDataMs,
       loader: async () => {
-        const playDataResponse = await this.authenticatedRequest(username, {
-          method: "GET",
-          path: "/my_page/play_data.php",
-          redirect: "manual",
-        });
+        await this.ensureAuthenticated(username);
+        const [playDataResponse, pumbilityScore] = await Promise.all([
+          this.authenticatedRequest(username, {
+            method: "GET",
+            path: "/my_page/play_data.php",
+            redirect: "manual",
+            skipEnsureAuthenticated: true,
+          }),
+          this.fetchPumbilityScore(username, true),
+        ]);
 
         const parsed = parsePlayerData(playDataResponse.body, username);
-        const pumbilityScore = await this.fetchPumbilityScore(username, true);
         return {
           ...parsed,
           pumbilityScore,
@@ -770,15 +779,16 @@ export class PiuClient {
 
     await this.ensureAuthenticated(username, { force: true });
 
-    const response = await this.authenticatedRequest(username, {
-      method: "GET",
-      path: "/my_page/play_data.php",
-      redirect: "manual",
-      skipEnsureAuthenticated: true,
-    });
-
+    const [response, pumbilityScore] = await Promise.all([
+      this.authenticatedRequest(username, {
+        method: "GET",
+        path: "/my_page/play_data.php",
+        redirect: "manual",
+        skipEnsureAuthenticated: true,
+      }),
+      this.fetchPumbilityScore(username, true),
+    ]);
     const parsed = parsePlayerData(response.body, username);
-    const pumbilityScore = await this.fetchPumbilityScore(username, true);
     const result: PlayerData = {
       ...parsed,
       pumbilityScore,
@@ -1490,6 +1500,10 @@ export class PiuClient {
       );
     }
 
+    if (await this.trySpeculativeSsoLogin(username, credentials)) {
+      return { validated: true };
+    }
+
     let response = await this.sendLoginRequest(username, credentials);
     let redirectLocation = this.extractLocation(response);
 
@@ -1526,6 +1540,29 @@ export class PiuClient {
     return { validated: false };
   }
 
+  private async trySpeculativeSsoLogin(
+    username: string,
+    credentials: Credentials,
+  ): Promise<boolean> {
+    if (!this.ssoAutoResolve || !this.speculativeSsoBootstrap) {
+      return false;
+    }
+
+    const redirectUrl = this.buildSsoRedirectUrl(absoluteUrl(this.baseUrl, LOGIN_PATH));
+    if (!(await this.tryResolveSsoBootstrapOverHttp(username, redirectUrl))) {
+      return false;
+    }
+
+    return this.completeLoginWithHydratedSsoSession(username, credentials, {
+      rejectAmbiguous: true,
+    });
+  }
+
+  private buildSsoRedirectUrl(refererUrl: string): string {
+    const encodedReferer = Buffer.from(refererUrl, "utf8").toString("base64");
+    return `https://api.am-pass.net/sso?referer=${encodeURIComponent(encodedReferer)}`;
+  }
+
   private async sendLoginRequest(
     username: string,
     credentials: Credentials,
@@ -1536,10 +1573,10 @@ export class PiuClient {
     form.set("mb_password", credentials.password);
     const loginUrl = absoluteUrl(this.baseUrl, LOGIN_PATH);
 
-    const headers: Record<string, string> = {
-      "content-type": "application/x-www-form-urlencoded",
-      "user-agent": this.userAgent,
-    };
+    const headers = this.buildBrowserNavigationHeaders(loginUrl, {
+      contentType: "application/x-www-form-urlencoded",
+      referer: absoluteUrl(this.baseUrl, "/"),
+    });
 
     const existingSession = this.sessions.get(username);
     if (existingSession && existingSession.cookies.length > 0) {
@@ -1601,6 +1638,11 @@ export class PiuClient {
       );
     }
 
+    if (await this.tryResolveSsoBootstrapOverHttp(username, redirectUrl)) {
+      await this.completeLoginWithHydratedSsoSession(username, credentials);
+      return;
+    }
+
     let playwrightChromium: { launch: (options: { headless: boolean }) => Promise<any> } | null = null;
     try {
       const playwrightModule = await import("playwright");
@@ -1649,12 +1691,7 @@ export class PiuClient {
       await browser.close();
       browser = null;
 
-      const secondLoginResponse = await this.sendLoginRequest(username, credentials);
-      await this.applyLoginResponseToSession(
-        username,
-        secondLoginResponse,
-        this.extractLocation(secondLoginResponse),
-      );
+      await this.completeLoginWithHydratedSsoSession(username, credentials);
     } catch (error) {
       if (error instanceof AuthenticationError || error instanceof SSOAutomationError) {
         throw error;
@@ -1669,6 +1706,140 @@ export class PiuClient {
         await browser.close();
       }
     }
+  }
+
+  private async tryResolveSsoBootstrapOverHttp(
+    username: string,
+    redirectUrl: string,
+  ): Promise<boolean> {
+    const temporarySession = this.createSession(username);
+    let currentUrl = redirectUrl;
+
+    try {
+      for (let redirectCount = 0; redirectCount <= DEFAULT_REDIRECT_LIMIT; redirectCount += 1) {
+        const headers = this.buildBrowserNavigationHeaders(currentUrl);
+        const cookieHeader = this.buildCookieHeader(temporarySession, currentUrl);
+        if (cookieHeader) {
+          headers.cookie = cookieHeader;
+        }
+
+        const response = await this.send({
+          method: "GET",
+          url: currentUrl,
+          headers,
+          redirect: "manual",
+          timeoutMs: this.timeoutMs,
+        });
+
+        this.applySetCookies(
+          temporarySession,
+          getHeaderValues(response.headers, "set-cookie"),
+          currentUrl,
+        );
+
+        const baseHostCookies = temporarySession.cookies.filter((cookie) =>
+          this.isCookieForBaseHost(cookie.domain),
+        );
+        if (baseHostCookies.length > 0) {
+          const session = this.sessions.get(username) ?? this.createSession(username);
+          session.cookies = baseHostCookies;
+          session.lastValidatedAt = 0;
+          session.expiresAt = this.deriveSessionExpiry(baseHostCookies);
+
+          this.sessions.set(username, session);
+          await this.persistSession(username);
+          return true;
+        }
+
+        if (!isRedirectStatus(response.status)) {
+          return false;
+        }
+
+        const location = this.extractLocationForRequest(response, currentUrl);
+        if (!location) {
+          return false;
+        }
+
+        currentUrl = location;
+      }
+    } catch {
+      return false;
+    }
+
+    return false;
+  }
+
+  private async completeLoginWithHydratedSsoSession(
+    username: string,
+    credentials: Credentials,
+    options: {
+      rejectAmbiguous?: boolean;
+    } = {},
+  ): Promise<boolean> {
+    const secondLoginResponse = await this.sendLoginRequest(username, credentials);
+    const redirectLocation = this.extractLocation(secondLoginResponse);
+    await this.applyLoginResponseToSession(
+      username,
+      secondLoginResponse,
+      redirectLocation,
+    );
+    const confirmed = this.loginResponseConfirmsAuthentication(redirectLocation);
+    if (confirmed) {
+      return true;
+    }
+
+    if (options.rejectAmbiguous && !isSsoUrl(redirectLocation)) {
+      throw new AuthenticationError(
+        "PIUGAME rejected credentials or did not confirm authentication.",
+      );
+    }
+
+    return false;
+  }
+
+  private loginResponseConfirmsAuthentication(redirectLocation: string | null): boolean {
+    if (!redirectLocation) {
+      return false;
+    }
+
+    return !isSsoUrl(redirectLocation) && !/\/bbs\/login\.php/i.test(redirectLocation);
+  }
+
+  private buildBrowserNavigationHeaders(
+    requestUrl: string,
+    options: {
+      contentType?: string;
+      referer?: string;
+    } = {},
+  ): Record<string, string> {
+    const origin = originFromBaseUrl(requestUrl);
+    const headers: Record<string, string> = {
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "no-cache",
+      pragma: "no-cache",
+      "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Microsoft Edge";v="150"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"macOS"',
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-user": "?1",
+      "upgrade-insecure-requests": "1",
+      "user-agent": this.userAgent === "piugame-sdk/0.1" ? DEFAULT_AUTH_USER_AGENT : this.userAgent,
+    };
+
+    if (options.contentType) {
+      headers["content-type"] = options.contentType;
+      headers.origin = origin;
+    }
+
+    if (options.referer) {
+      headers.referer = options.referer;
+    }
+
+    return headers;
   }
 
   protected async waitForSsoBootstrapCookies(context: any, page: any): Promise<BrowserCookie[]> {
@@ -2022,6 +2193,13 @@ export class PiuClient {
   }
 
   private extractLocation(response: TransportResponse): string | null {
+    return this.extractLocationForRequest(response, this.baseUrl);
+  }
+
+  private extractLocationForRequest(
+    response: TransportResponse,
+    requestUrl: string,
+  ): string | null {
     const values = getHeaderValues(response.headers, "location");
     if (values.length === 0) {
       return null;
@@ -2032,7 +2210,7 @@ export class PiuClient {
       return location;
     }
 
-    return absoluteUrl(this.baseUrl, location);
+    return new URL(location, requestUrl).toString();
   }
 
   private async requestWithCurrentSession(

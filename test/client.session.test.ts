@@ -363,6 +363,75 @@ describe("PiuClient session manager", () => {
     expect(requestedUrl).toBe("https://example.test/bbs/login_check.php");
   });
 
+  test("login POST uses browser navigation headers and raw form separators", async () => {
+    let postedHeaders: Record<string, string> | undefined;
+    let postedBody: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        postedHeaders = request.headers;
+        postedBody = request.body;
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+    await client.login("fixture_user@example.com", "fixture_password");
+
+    expect(postedHeaders?.accept).toContain("text/html");
+    expect(postedHeaders?.origin).toBe("https://phoenix.piugame.com");
+    expect(postedHeaders?.referer).toBe("https://phoenix.piugame.com/");
+    expect(postedHeaders?.["sec-fetch-mode"]).toBe("navigate");
+    expect(postedHeaders?.["upgrade-insecure-requests"]).toBe("1");
+    expect(postedHeaders?.["user-agent"]).toContain("Mozilla/5.0");
+    expect(postedBody).toContain("url=%2F&mb_id=fixture_user%40example.com&mb_password=");
+    expect(postedBody).not.toContain("&amp;");
+  });
+
+  test("login POST keeps caller-provided user agent", async () => {
+    let postedUserAgent: string | undefined;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        postedUserAgent = request.headers["user-agent"];
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport, userAgent: "custom-test-agent" });
+    await client.login("fixture_user", "fixture_password");
+
+    expect(postedUserAgent).toBe("custom-test-agent");
+  });
+
   test("cache keys are version-scoped", () => {
     const phoenixClient = new PiuClient();
     const phoenix2Client = new PiuClient({ version: "phoenix2" });
@@ -880,6 +949,277 @@ describe("PiuClient session manager", () => {
     expect(secondLoginSawBootstrapCookie).toBe(true);
     expect(playwright.gotoCalls()).toBe(1);
     expect(playwright.browserCloseCalls()).toBe(1);
+  });
+
+  test("SSO bootstrap uses HTTP redirect cookies before falling back to Playwright", async () => {
+    const playDataHtml = PLAY_DATA_HTML;
+    let loginCalls = 0;
+    let ssoBootstrapCalls = 0;
+    let secondLoginSawBootstrapCookie = false;
+
+    vi.doMock("playwright", () => ({
+      chromium: {
+        launch: async () => {
+          throw new Error("Playwright should not launch for HTTP SSO bootstrap.");
+        },
+      },
+    }));
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.hostname === "api.am-pass.net" && url.pathname === "/sso") {
+        ssoBootstrapCalls += 1;
+        return response(
+          302,
+          "",
+          {
+            location: "https://phoenix.piugame.com/ssoc",
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/ssoc") {
+        return response(
+          302,
+          "",
+          {
+            location: "/",
+            "set-cookie": [
+              "sid=bootstrap; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=bootphp; Path=/; Domain=.piugame.com; Max-Age=3600",
+            ],
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/bbs/login_check.php") {
+        loginCalls += 1;
+
+        if (loginCalls === 1) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        const cookieHeader = request.headers.cookie ?? "";
+        secondLoginSawBootstrapCookie =
+          cookieHeader.includes("sid=bootstrap") &&
+          cookieHeader.includes("PHPSESSID=bootphp");
+
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, playDataHtml);
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport });
+
+    await client.login("fixture_user", "fixture_password");
+    const data = await client.getPlayerData("fixture_user");
+
+    expect(data.username).toBe("fixture_user");
+    expect(loginCalls).toBe(2);
+    expect(ssoBootstrapCalls).toBe(1);
+    expect(secondLoginSawBootstrapCookie).toBe(true);
+  });
+
+  test("speculative SSO bootstrap skips the initial login POST", async () => {
+    const requestOrder: string[] = [];
+    let loginCalls = 0;
+    let secondLoginSawBootstrapCookie = false;
+
+    vi.doMock("playwright", () => ({
+      chromium: {
+        launch: async () => {
+          throw new Error("Playwright should not launch for speculative HTTP SSO bootstrap.");
+        },
+      },
+    }));
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+      requestOrder.push(`${request.method} ${url.hostname}${url.pathname}`);
+
+      if (url.hostname === "api.am-pass.net" && url.pathname === "/sso") {
+        expect(url.searchParams.get("referer")).toBe(
+          Buffer.from("https://phoenix.piugame.com/bbs/login_check.php").toString("base64"),
+        );
+        return response(
+          302,
+          "",
+          {
+            location: "https://phoenix.piugame.com/ssoc?sid=bootstrap",
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/ssoc") {
+        return response(
+          302,
+          "",
+          {
+            location: "/",
+            "set-cookie": [
+              "sid=bootstrap; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=bootphp; Path=/; Domain=.piugame.com; Max-Age=3600",
+            ],
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/bbs/login_check.php") {
+        loginCalls += 1;
+        const cookieHeader = request.headers.cookie ?? "";
+        secondLoginSawBootstrapCookie =
+          cookieHeader.includes("sid=bootstrap") &&
+          cookieHeader.includes("PHPSESSID=bootphp");
+
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        if (!hasSessionCookie(request)) {
+          return response(302, "", {
+            location: "https://api.am-pass.net/sso?redirect=piu",
+          });
+        }
+
+        return response(200, PLAY_DATA_HTML);
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport, speculativeSsoBootstrap: true });
+
+    await client.login("fixture_user", "fixture_password");
+    const data = await client.getPlayerData("fixture_user");
+
+    expect(data.username).toBe("fixture_user");
+    expect(loginCalls).toBe(1);
+    expect(secondLoginSawBootstrapCookie).toBe(true);
+    expect(requestOrder.slice(0, 3)).toEqual([
+      "GET api.am-pass.net/sso",
+      "GET phoenix.piugame.com/ssoc",
+      "POST phoenix.piugame.com/bbs/login_check.php",
+    ]);
+  });
+
+  test("speculative SSO bootstrap falls back to normal login when bootstrap cookies do not arrive", async () => {
+    const requestOrder: string[] = [];
+    let loginCalls = 0;
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+      requestOrder.push(`${request.method} ${url.hostname}${url.pathname}`);
+
+      if (url.hostname === "api.am-pass.net" && url.pathname === "/sso") {
+        return response(404, "missing bootstrap", {}, request.url);
+      }
+
+      if (url.pathname === "/bbs/login_check.php") {
+        loginCalls += 1;
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML);
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport, speculativeSsoBootstrap: true });
+
+    await client.login("fixture_user", "fixture_password");
+
+    expect(loginCalls).toBe(1);
+    expect(requestOrder.slice(0, 2)).toEqual([
+      "GET api.am-pass.net/sso",
+      "POST phoenix.piugame.com/bbs/login_check.php",
+    ]);
+  });
+
+  test("speculative SSO bootstrap maps ambiguous credential response to AuthenticationError", async () => {
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.hostname === "api.am-pass.net" && url.pathname === "/sso") {
+        return response(
+          302,
+          "",
+          {
+            location: "https://phoenix.piugame.com/ssoc?sid=bootstrap",
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/ssoc") {
+        return response(
+          302,
+          "",
+          {
+            location: "/",
+            "set-cookie": [
+              "sid=bootstrap; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=bootphp; Path=/; Domain=.piugame.com; Max-Age=3600",
+            ],
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(200, "credentials rejected", {
+          "set-cookie": [
+            "sid=bootstrap; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=bootphp; Path=/",
+          ],
+        });
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ transport, speculativeSsoBootstrap: true });
+
+    await expect(client.login("fixture_user", "bad_password")).rejects.toBeInstanceOf(
+      AuthenticationError,
+    );
   });
 
   test("hybrid SSO maps bad second login credentials to AuthenticationError", async () => {

@@ -26,6 +26,7 @@ export interface PiuClientOptions {
   ssoAutoResolve?: boolean;
   ssoHeadless?: boolean;
   ssoTimeoutMs?: number;
+  speculativeSsoBootstrap?: boolean;
   transport?: HttpTransport;
 }
 

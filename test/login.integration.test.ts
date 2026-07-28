@@ -30,7 +30,7 @@ function parseBool(value: string | undefined): boolean | null {
 }
 
 const insecureTlsOverride = parseBool(process.env.PIU_TEST_INSECURE_TLS);
-const preloadPlaywright = parseBool(process.env.PIU_TEST_PRELOAD_PLAYWRIGHT) ?? true;
+const preloadPlaywright = parseBool(process.env.PIU_TEST_PRELOAD_PLAYWRIGHT) ?? false;
 
 function createClient(): PiuClient {
   return insecureTlsOverride === null
