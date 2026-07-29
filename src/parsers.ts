@@ -152,28 +152,36 @@ function parseFileBasenameCode(src: string | undefined): string | null {
   return match[1].toLowerCase();
 }
 
-function parseStepBall(containerHtml: ReturnType<typeof load>): { mode: string | null; level: number | null } {
+function normalizeChartLevel(level: string): string {
+  if (!/^\d+$/.test(level)) {
+    return level;
+  }
+  return `${Number.parseInt(level, 10)}`;
+}
+
+function parseStepBall(containerHtml: ReturnType<typeof load>): { mode: string | null; level: string | null } {
   const modeImg = containerHtml(".tw img").attr("src");
   const modeMatch = modeImg ? /\/([^/]+)_text\.png/i.exec(modeImg) : null;
   const mode = modeMatch?.[1]?.toUpperCase() ?? null;
 
-  const levelDigits: string[] = [];
+  const levelParts: string[] = [];
   containerHtml(".numw img").each((_, img) => {
     const src = containerHtml(img).attr("src");
-    const levelMatch = src ? /_num_(\d+)\.png/i.exec(src) : null;
+    const levelMatch = src ? /(?:_num_([^/.?#]+)|_guess)\.png/i.exec(src) : null;
     if (levelMatch) {
-      levelDigits.push(levelMatch[1]);
+      const part = levelMatch[1] ?? "?";
+      levelParts.push(/^\d+$/.test(part) ? part : "?");
     }
   });
 
-  const level = levelDigits.length > 0 ? Number(levelDigits.join("")) : null;
+  const level = levelParts.length > 0 ? normalizeChartLevel(levelParts.join("")) : null;
   return {
     mode,
-    level: Number.isFinite(level) ? level : null,
+    level,
   };
 }
 
-function parseStepBallFromElement(root: ReturnType<typeof load>, selector: string): { mode: string | null; level: number | null } {
+function parseStepBallFromElement(root: ReturnType<typeof load>, selector: string): { mode: string | null; level: string | null } {
   const html = root(selector).first().html();
   if (!html) {
     return { mode: null, level: null };

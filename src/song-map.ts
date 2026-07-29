@@ -35,7 +35,7 @@ export function extractSongImageFilename(songImageUrl: string | null): string | 
 
   try {
     const parsed = new URL(songImageUrl);
-    if (!parsed.pathname.startsWith("/data/song_img/")) {
+    if (!/^\/data\/song_img2?\//i.test(parsed.pathname)) {
       return null;
     }
 

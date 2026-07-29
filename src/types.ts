@@ -68,7 +68,7 @@ export interface RecentPlay {
   songName: string;
   songImageUrl: string | null;
   mode: string | null;
-  level: number | null;
+  level: string | null;
   score: number | null;
   grade: string | null;
   plate: string | null;
@@ -83,7 +83,7 @@ export interface TopPlay {
   artist: string | null;
   songImageUrl: string | null;
   mode: string | null;
-  level: number | null;
+  level: string | null;
   grade: string | null;
   score: number | null;
   playedAt: string | null;
@@ -113,7 +113,7 @@ export interface TitleUpdateResult {
 export interface BestPlay {
   songName: string;
   mode: string | null;
-  level: number | null;
+  level: string | null;
   score: number | null;
   grade: string | null;
   plate: string | null;

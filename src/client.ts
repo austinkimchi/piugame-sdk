@@ -891,7 +891,7 @@ export class PiuClient {
   private playIdentity(
     songName: string,
     mode: string | null,
-    level: number | null,
+    level: string | null,
     score: number | null,
     grade: string | null,
   ): string {

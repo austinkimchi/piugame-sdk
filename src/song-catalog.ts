@@ -9,12 +9,12 @@ export interface ParsedSongChartRow {
   imageFilename: string | null;
   scope: SongChartScope;
   mode: string;
-  level: number;
+  level: string;
 }
 
 export interface SongCatalogChart {
   mode: string;
-  level: number;
+  level: string;
   token: string;
 }
 
@@ -27,6 +27,7 @@ export interface SongCatalogDocument {
   songKey: string;
   songName: string;
   artist: string;
+  piuVersion?: string;
   images: string[];
   chartsBasic: SongCatalogChart[];
   chartsFull: SongCatalogChart[];
@@ -100,7 +101,7 @@ function extractSongImageFilename(imageUrl: string | null): string | null {
 
   try {
     const parsed = new URL(imageUrl);
-    const match = /\/data\/song_img\/([^/]+\.png)(?:[?#].*)?$/i.exec(parsed.pathname + parsed.search);
+    const match = /\/data\/song_img2?\/([^/]+\.png)(?:[?#].*)?$/i.exec(parsed.pathname + parsed.search);
     if (!match) {
       return null;
     }
@@ -117,7 +118,7 @@ function extractScopeFromStepBallStyle(styleValue: string | undefined): SongChar
     return null;
   }
 
-  const match = /\/l_img\/stepball\/(basic|full)\/[a-z0-9_]+_bg\.png/i.exec(normalizedStyle);
+  const match = /\/l_img\/(?:p2\/)?stepball\/(basic|full)\/[a-z0-9_]+_bg\.png/i.exec(normalizedStyle);
   if (!match) {
     return null;
   }
@@ -138,34 +139,47 @@ function extractModeCode(src: string | undefined): string | null {
   return match[1].toUpperCase();
 }
 
-function extractLevelDigits(levelImageSources: Array<string | undefined>): number | null {
-  const digits: string[] = [];
+function extractLevelToken(levelImageSources: Array<string | undefined>): string | null {
+  const pieces: string[] = [];
 
   for (const src of levelImageSources) {
     if (!src) {
       continue;
     }
 
-    const match = /_num_(\d+)\.png(?:[?#].*)?$/i.exec(src);
+    const match = /(?:_num_([^/.?#]+)|_guess)\.png(?:[?#].*)?$/i.exec(src);
     if (match) {
-      digits.push(match[1]);
+      const piece = match[1] ?? "?";
+      pieces.push(/^\d+$/.test(piece) ? piece : "?");
     }
   }
 
-  if (digits.length === 0) {
+  if (pieces.length === 0) {
     return null;
   }
 
-  const level = Number(digits.join(""));
-  return Number.isFinite(level) ? level : null;
+  return normalizeChartLevel(pieces.join(""));
 }
 
-function chartToken(mode: string, level: number): string {
+function normalizeChartLevel(level: string): string {
+  if (!/^\d+$/.test(level)) {
+    return level;
+  }
+  return `${Number.parseInt(level, 10)}`;
+}
+
+function chartToken(mode: string, level: string): string {
+  const normalizedLevel = normalizeChartLevel(level);
   if (mode === "C") {
-    return `Cx${level}`;
+    return `Cx${normalizedLevel}`;
   }
 
-  return `${mode}${level}`;
+  return `${mode}${normalizedLevel}`;
+}
+
+function levelSortValue(level: string): number {
+  const parsed = Number.parseInt(level, 10);
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
 }
 
 function normalizeSongKey(songName: string): string {
@@ -194,21 +208,21 @@ function compareFullCharts(left: SongCatalogChart, right: SongCatalogChart): num
     return byMode;
   }
 
-  const byLevel = left.level - right.level;
+  const byLevel = levelSortValue(left.level) - levelSortValue(right.level);
   if (byLevel !== 0) {
     return byLevel;
   }
 
-  return left.mode.localeCompare(right.mode);
+  return left.level.localeCompare(right.level) || left.mode.localeCompare(right.mode);
 }
 
 function compareBasicCharts(left: SongCatalogChart, right: SongCatalogChart): number {
-  const byLevel = left.level - right.level;
+  const byLevel = levelSortValue(left.level) - levelSortValue(right.level);
   if (byLevel !== 0) {
     return byLevel;
   }
 
-  return left.mode.localeCompare(right.mode);
+  return left.level.localeCompare(right.level) || left.mode.localeCompare(right.mode);
 }
 
 export function parseSongCatalogRows(html: string): SongCatalogParseResult {
@@ -235,7 +249,7 @@ export function parseSongCatalogRows(html: string): SongCatalogParseResult {
       .find(".numw img")
       .toArray()
       .map((item) => $(item).attr("src"));
-    const level = extractLevelDigits(levelImageSources);
+    const level = extractLevelToken(levelImageSources);
 
     if (!songName || !artist || !scope || !mode || level === null) {
       skippedRows += 1;
