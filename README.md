@@ -1,6 +1,9 @@
 # PIUGame SDK
 
 [![CI](https://github.com/austinkimchi/piugame-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/austinkimchi/piugame-sdk/actions/workflows/ci.yml)
+[![Node.js >=18](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 SDK package for Pump It Up (ANDAMIRO).
 
@@ -130,3 +133,7 @@ npm run test
 - `PIU_SONG_MAP_ENABLE=1`, `PIU_SONG_MAP_AUTO_FETCH=1`: backward-compatible aliases for song-jacket ensure mode
 - `PIU_ASSET_MAP_ENABLE=1`: backward-compatible aggregate fallback for profile avatar plus grade/plate asset ensure mode; explicit split flags above override it
 - `PIU_MONGO_URI` or `MONGODB_URI`: used by one-time scripts that seed MongoDB data
+
+## License
+
+MIT. See [LICENSE](LICENSE).
