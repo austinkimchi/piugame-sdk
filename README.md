@@ -1,5 +1,7 @@
 # PIUGame SDK
 
+[![CI](https://github.com/austinkimchi/piugame-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/austinkimchi/piugame-sdk/actions/workflows/ci.yml)
+
 SDK package for Pump It Up (ANDAMIRO).
 
 ## Features
@@ -128,4 +130,3 @@ npm run test
 - `PIU_SONG_MAP_ENABLE=1`, `PIU_SONG_MAP_AUTO_FETCH=1`: backward-compatible aliases for song-jacket ensure mode
 - `PIU_ASSET_MAP_ENABLE=1`: backward-compatible aggregate fallback for profile avatar plus grade/plate asset ensure mode; explicit split flags above override it
 - `PIU_MONGO_URI` or `MONGODB_URI`: used by one-time scripts that seed MongoDB data
-
