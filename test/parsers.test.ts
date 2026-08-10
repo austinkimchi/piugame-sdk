@@ -219,7 +219,7 @@ describe("parsers", () => {
     const first = plays[0];
     expect(first.songName).toBe("Clematis Rapsodia");
     expect(first.mode).toBe("S");
-    expect(first.level).toBe(15);
+    expect(first.level).toBe("15");
     expect(first.stageBreak).toBe(true);
     expect(first.score).toBeNull();
     expect(first.judgments.perfect).toBe(555);
@@ -261,7 +261,7 @@ describe("parsers", () => {
     expect(first.songName).toBe("Spray");
     expect(first.artist).toBe("WEi");
     expect(first.mode).toBe("S");
-    expect(first.level).toBe(15);
+    expect(first.level).toBe("15");
     expect(first.grade).toBe("s");
     expect(first.score).toBe(300);
     expect(first.playedAt).toBe("2026-04-13 13:24:55 (GMT+9)");
@@ -315,7 +315,7 @@ describe("parsers", () => {
     const first = page.plays[0];
     expect(first.songName).toBe("BATTLE NO.1");
     expect(first.mode).toBe("S");
-    expect(first.level).toBe(14);
+    expect(first.level).toBe("14");
     expect(first.score).toBe(927332);
     expect(first.grade).toBe("aa_p");
     expect(first.plate).toBe("fg");

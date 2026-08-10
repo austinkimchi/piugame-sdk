@@ -93,7 +93,7 @@ describe("song catalog parser", () => {
         row.artist === "(G)I-DLE" &&
         row.scope === "basic" &&
         row.mode === "N" &&
-        row.level === 3,
+        row.level === "3",
     );
     expect(basicChart?.imageFilename).toBe("q.png");
 
@@ -103,7 +103,7 @@ describe("song catalog parser", () => {
         row.artist === "SHK" &&
         row.scope === "full" &&
         row.mode === "S" &&
-        row.level === 16,
+        row.level === "16",
     );
     expect(fullChart?.imageFilename).toBe("e.png");
 
@@ -117,15 +117,15 @@ describe("song catalog parser", () => {
 describe("song catalog build behavior", () => {
   test("dedupes repeated charts and applies S -> D -> C full chart sort + token formatting", () => {
     const rows: ParsedSongChartRow[] = [
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-b.png", scope: "full", mode: "D", level: 19 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "S", level: 14 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "S", level: 3 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "C", level: 4 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "C", level: 2 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-b.png", scope: "full", mode: "D", level: 14 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-b.png", scope: "full", mode: "D", level: 14 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "basic", mode: "N", level: 4 },
-      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "basic", mode: "H", level: 7 },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-b.png", scope: "full", mode: "D", level: "19" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "S", level: "14" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "S", level: "3" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "C", level: "4" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "full", mode: "C", level: "2" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-b.png", scope: "full", mode: "D", level: "14" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-b.png", scope: "full", mode: "D", level: "14" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "basic", mode: "N", level: "4" },
+      { songName: "Timing", artist: "BanYa", imageFilename: "timing-a.png", scope: "basic", mode: "H", level: "7" },
     ];
 
     const docs = buildSongCatalogDocuments(rows, "fixture.php", "2026-04-20T00:00:00.000Z");
@@ -142,8 +142,8 @@ describe("song catalog build behavior", () => {
 
   test("keeps full-song titles distinct from non-full-song titles", () => {
     const rows: ParsedSongChartRow[] = [
-      { songName: "Full Moon", artist: "Dreamcatcher", imageFilename: "a.png", scope: "full", mode: "S", level: 12 },
-      { songName: "Full Moon - FULL SONG -", artist: "Dreamcatcher", imageFilename: "b.png", scope: "full", mode: "S", level: 18 },
+      { songName: "Full Moon", artist: "Dreamcatcher", imageFilename: "a.png", scope: "full", mode: "S", level: "12" },
+      { songName: "Full Moon - FULL SONG -", artist: "Dreamcatcher", imageFilename: "b.png", scope: "full", mode: "S", level: "18" },
     ];
 
     const docs = buildSongCatalogDocuments(rows, "fixture.php", "2026-04-20T00:00:00.000Z");
