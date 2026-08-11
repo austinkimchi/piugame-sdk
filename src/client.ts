@@ -122,6 +122,7 @@ const SESSION_EXPIRY_FALLBACK_MS = 30 * 60 * 1000;
 const SESSION_VALIDATION_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_REDIRECT_LIMIT = 5;
 const DEFAULT_SSO_TIMEOUT_MS = 60_000;
+const DEFAULT_FETCH_ALL_PLAYS_CONCURRENCY = 8;
 const DEFAULT_AUTH_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36 Edg/150.0.0.0";
 const INSECURE_TLS_ENV_KEY = "PIU_INSECURE_TLS";
@@ -376,6 +377,37 @@ function isRedirectStatus(status: number): boolean {
   return status >= 300 && status < 400;
 }
 
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || value === undefined) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex]);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+  return results;
+}
+
 function isSsoUrl(urlOrLocation: string | undefined | null): boolean {
   if (!urlOrLocation) {
     return false;
@@ -526,6 +558,7 @@ export class PiuClient {
   private readonly baseUrl: string;
   private readonly cacheNamespace: string;
   private readonly timeoutMs: number;
+  private readonly fetchAllPlaysConcurrency: number;
   private readonly cacheTtl: CacheTtlConfig;
   private readonly userAgent: string;
   private readonly transport: HttpTransport;
@@ -550,6 +583,10 @@ export class PiuClient {
     this.baseUrl = resolveBaseUrl(options);
     this.cacheNamespace = cacheNamespaceFromBaseUrl(this.baseUrl);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.fetchAllPlaysConcurrency = normalizePositiveInteger(
+      options.fetchAllPlaysConcurrency,
+      DEFAULT_FETCH_ALL_PLAYS_CONCURRENCY,
+    );
     this.cacheTtl = {
       ...DEFAULT_TTL,
       ...(options.cacheTtl ?? {}),
@@ -808,8 +845,18 @@ export class PiuClient {
     const detectedLastPage = firstPage.lastPage;
 
     if (detectedLastPage && detectedLastPage > 1) {
-      for (let page = 2; page <= detectedLastPage; page += 1) {
-        const result = await this.getBestScorePage(username, page);
+      const pagesToFetch = Array.from(
+        { length: detectedLastPage - 1 },
+        (_, index) => index + 2,
+      );
+      const results = await mapWithConcurrency(
+        pagesToFetch,
+        this.fetchAllPlaysConcurrency,
+        (page) => this.getBestScorePage(username, page),
+      );
+
+      for (const result of results) {
+        const page = result.page;
         pagesFetched.push(page);
 
         for (const play of result.plays) {
@@ -1643,69 +1690,7 @@ export class PiuClient {
       return;
     }
 
-    let playwrightChromium: { launch: (options: { headless: boolean }) => Promise<any> } | null = null;
-    try {
-      const playwrightModule = await import("playwright");
-      const candidate = (playwrightModule as { chromium?: unknown }).chromium;
-      if (candidate && typeof candidate === "object" && "launch" in candidate) {
-        playwrightChromium = candidate as { launch: (options: { headless: boolean }) => Promise<any> };
-      }
-    } catch (error) {
-      throw new SSOAutomationError(
-        "Playwright could not be loaded for automatic SSO resolution.",
-        { cause: error },
-      );
-    }
-
-    if (!playwrightChromium) {
-      throw new SSOAutomationError("Playwright chromium launcher is unavailable.");
-    }
-
-    let browser: any = null;
-
-    try {
-      browser = await playwrightChromium.launch({ headless: this.ssoHeadless });
-      const context = await browser.newContext();
-      const page = await context.newPage();
-
-      await page.goto(redirectUrl, {
-        waitUntil: "commit",
-        timeout: this.ssoTimeoutMs,
-      });
-
-      const browserCookies = await this.waitForSsoBootstrapCookies(context, page);
-      const mappedCookies = this.mapBrowserCookiesToSessionCookies(browserCookies);
-
-      if (mappedCookies.length === 0) {
-        throw new SSOAutomationError("Automatic SSO finished without PIUGAME bootstrap cookies.");
-      }
-
-      const session = this.sessions.get(username) ?? this.createSession(username);
-      session.cookies = mappedCookies;
-      session.lastValidatedAt = 0;
-      session.expiresAt = this.deriveSessionExpiry(mappedCookies);
-
-      this.sessions.set(username, session);
-      await this.persistSession(username);
-
-      await browser.close();
-      browser = null;
-
-      await this.completeLoginWithHydratedSsoSession(username, credentials);
-    } catch (error) {
-      if (error instanceof AuthenticationError || error instanceof SSOAutomationError) {
-        throw error;
-      }
-
-      throw new SSOAutomationError(
-        `Automatic SSO resolution failed for '${username}'.`,
-        { cause: error },
-      );
-    } finally {
-      if (browser) {
-        await browser.close();
-      }
-    }
+    throw new SSORequiredError(redirectUrl);
   }
 
   private async tryResolveSsoBootstrapOverHttp(

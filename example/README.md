@@ -21,4 +21,4 @@ Set these variables in `.env`:
 
 - These examples import from `../src` for local development in this repository.
 - For published package usage, change imports to `piugame-sdk`.
-- Automatic SSO resolution needs Playwright browser binaries. If missing, run `npx playwright install chromium`.
+- Automatic SSO resolution uses HTTPS requests and the SDK cookie jar; no browser install is needed for these examples.

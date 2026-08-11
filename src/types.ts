@@ -19,6 +19,7 @@ export interface PiuClientOptions {
   baseUrl?: string;
   version?: PiuGameVersion;
   timeoutMs?: number;
+  fetchAllPlaysConcurrency?: number;
   cacheTtl?: Partial<CacheTtlConfig>;
   userAgent?: string;
   rejectUnauthorized?: boolean;

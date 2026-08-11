@@ -887,19 +887,39 @@ describe("PiuClient session manager", () => {
     expect(loginCalls).toBe(1);
   });
 
-  test("hybrid SSO hydrates bootstrap cookies and completes login through transport", async () => {
+  test("HTTP SSO hydrates bootstrap cookies and completes login through transport", async () => {
     const playDataHtml = PLAY_DATA_HTML;
     let loginCalls = 0;
     let secondLoginSawBootstrapCookie = false;
-    const playwright = mockPlaywrightForSso([
-      {
-        ...(browserSessionCookie() as Record<string, unknown>),
-        value: "bootstrap",
-      },
-    ]);
 
     const transport: HttpTransport = async (request) => {
       const url = new URL(request.url);
+
+      if (url.hostname === "api.am-pass.net" && url.pathname === "/sso") {
+        return response(
+          302,
+          "",
+          {
+            location: "https://phoenix.piugame.com/ssoc",
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/ssoc") {
+        return response(
+          302,
+          "",
+          {
+            location: "/",
+            "set-cookie": [
+              "sid=bootstrap; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=bootphp; Path=/; Domain=.piugame.com; Max-Age=3600",
+            ],
+          },
+          request.url,
+        );
+      }
 
       if (url.pathname === "/bbs/login_check.php") {
         loginCalls += 1;
@@ -947,11 +967,9 @@ describe("PiuClient session manager", () => {
     expect(data.username).toBe("fixture_user");
     expect(loginCalls).toBe(2);
     expect(secondLoginSawBootstrapCookie).toBe(true);
-    expect(playwright.gotoCalls()).toBe(1);
-    expect(playwright.browserCloseCalls()).toBe(1);
   });
 
-  test("SSO bootstrap uses HTTP redirect cookies before falling back to Playwright", async () => {
+  test("SSO bootstrap uses HTTP redirect cookies without Playwright", async () => {
     const playDataHtml = PLAY_DATA_HTML;
     let loginCalls = 0;
     let ssoBootstrapCalls = 0;
@@ -1223,10 +1241,34 @@ describe("PiuClient session manager", () => {
   });
 
   test("hybrid SSO maps bad second login credentials to AuthenticationError", async () => {
-    mockPlaywrightForSso([browserSessionCookie()]);
-
     const transport: HttpTransport = async (request) => {
       const url = new URL(request.url);
+
+      if (url.hostname === "api.am-pass.net" && url.pathname === "/sso") {
+        return response(
+          302,
+          "",
+          {
+            location: "https://phoenix.piugame.com/ssoc",
+          },
+          request.url,
+        );
+      }
+
+      if (url.pathname === "/ssoc") {
+        return response(
+          302,
+          "",
+          {
+            location: "/",
+            "set-cookie": [
+              "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+              "PHPSESSID=mockphp; Path=/; Domain=.piugame.com; Max-Age=3600",
+            ],
+          },
+          request.url,
+        );
+      }
 
       if (url.pathname === "/bbs/login_check.php") {
         return response(302, "", {
@@ -1613,6 +1655,98 @@ describe("PiuClient session manager", () => {
       "Song 1",
       "Song 2",
       "Song 3",
+    ]);
+  });
+
+  test("fetch_all_plays fetches detected pages with bounded concurrency", async () => {
+    const bestScorePageHtml = (
+      songName: string,
+      score: number,
+      page: number,
+      lastPage: number,
+    ): string => `
+      <div class="board_search"><div class="total_wrap"><i class="t2">5</i></div></div>
+      <div class="my_best_score_wrap">
+        <ul class="my_best_scoreList flex wrap">
+          <li>
+            <div class="in">
+              <div class="level_con mgL">
+                <div class="stepBall_in">
+                  <div class="tw"><img src="https://www.piugame.com/l_img/stepball/full/s_text.png"/></div>
+                  <div class="numw"><img src="https://www.piugame.com/l_img/stepball/full/s_num_1.png"/></div>
+                </div>
+              </div>
+              <div class="song_con"><div class="song_name"><p>${songName}</p></div></div>
+              <div class="etc_con">
+                <ul class="list">
+                  <li><div class="txt_v"><span class="num">${score.toLocaleString()}</span></div></li>
+                  <li><div class="img"><img src="https://www.piugame.com/l_img/grade/aa.png"/></div></li>
+                </ul>
+              </div>
+            </div>
+          </li>
+        </ul>
+        <div class="page_search">
+          <div class="board_paging">
+            <button type="button" onclick="location.href='?&&amp;page=${page}'" class="on">${page}</button>
+            <button type="button" onclick="location.href='?&&amp;page=${lastPage}'" class="icon"><i class="xi last"></i></button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    let activeBestScoreRequests = 0;
+    let maxActiveBestScoreRequests = 0;
+    const requestedPages: number[] = [];
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/my_best_score.php") {
+        const page = Number(url.searchParams.get("page") ?? "1");
+        requestedPages.push(page);
+        activeBestScoreRequests += 1;
+        maxActiveBestScoreRequests = Math.max(maxActiveBestScoreRequests, activeBestScoreRequests);
+
+        if (page > 1) {
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+        }
+
+        activeBestScoreRequests -= 1;
+        return response(200, bestScorePageHtml(`Song ${page}`, 900000 + page, page, 5), {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ fetchAllPlaysConcurrency: 2, transport });
+    await client.login("fixture_user", "fixture_password");
+
+    const allPlays = await client.fetchAllPlays("fixture_user");
+
+    expect(maxActiveBestScoreRequests).toBe(2);
+    expect(requestedPages).toEqual([1, 2, 3, 4, 5]);
+    expect(allPlays.pagesFetched).toEqual([1, 2, 3, 4, 5]);
+    expect(allPlays.plays.map((play) => play.songName)).toEqual([
+      "Song 1",
+      "Song 2",
+      "Song 3",
+      "Song 4",
+      "Song 5",
     ]);
   });
 

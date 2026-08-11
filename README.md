@@ -30,12 +30,6 @@ SDK package for Pump It Up (ANDAMIRO).
 npm install piugame-sdk
 ```
 
-For SSO automation:
-
-```bash
-npx playwright install chromium
-```
-
 ## Quick Start (`PiuClient`)
 
 ```ts
@@ -71,6 +65,8 @@ Advanced callers can still pass `baseUrl` directly; when provided, it overrides 
 - `refresh(username)`
 - `fetchAllPlays(username)`
 - `setDatabase(mongoUri)`
+
+`fetchAllPlays` fetches detected score pages concurrently. The default is bounded at 8 requests; tune it with `new PiuClient({ fetchAllPlaysConcurrency: 4 })` if you want a gentler crawl.
 
 ### Top-level wrappers
 
@@ -120,6 +116,30 @@ See `example/`:
 npm run build
 npm run test
 ```
+
+## Song Media Collection
+
+The media collector targets `piugame_sdk.song_catalog_2` by default.
+
+```bash
+npm run collect:media:audio
+npm run collect:media:youtube-index
+npm run collect:media:youtube
+npm run collect:media:youtube-reconcile
+npm run collect:media:youtube-backfill -- --youtube-search-budget=25
+npm run review:media-ui
+```
+
+- Audio previews are crawled from PumpPro+ with Playwright/Chromium and written to each song as `audioPreview`.
+- YouTube chart videos are searched in priority order: Nevsister, Pump It Up Official, then general YouTube. General or ambiguous matches are marked for review.
+- YouTube channel videos are first cached from the YouTube Data API. Set `YOUTUBE_API_KEY` in `.env` before running `collect:media:youtube-index`.
+- General YouTube fallback search is disabled unless `--youtube-search-fallback` is passed; `youtube-backfill` enables a song-level fallback automatically and reuses one search across that song's missing chart tokens. Cap it with `--youtube-search-budget` to protect the 100/day search quota.
+- `youtube-reconcile` removes non-manual auto links whose video title does not contain the chart token, refreshes match statuses from `chartsFull[].links`, and deletes stale YouTube match rows for charts no longer in the catalog.
+- Per-chart general search remains disabled unless `--youtube-chart-search-fallback` is passed.
+- Chart links are written to the matching `chartsFull[]` entry by `token` as an ordered `links` array.
+- Raw matches and review state are stored in `song_catalog_2_media_matches`; YouTube channel cache is stored in `song_catalog_2_youtube_videos`; manual UI overrides are stored in `song_catalog_2_media_overrides`.
+- The media review UI supports dragging local audio files onto an audio item; uploads are copied to `data/audio_previews/manual/` and saved as a manual audio override.
+- Useful flags: `--phase=audio|youtube-index|youtube|youtube-reconcile|youtube-backfill|all`, `--dry-run`, `--max-pages=20`, `--limit-charts=100`, `--youtube-search-fallback`, `--youtube-search-budget=25`, `--youtube-chart-search-fallback`, `--download-audio`, `--show-browser`, `--playwright-timeout-ms=45000`.
 
 ## Environment Variables (For Development)
 
