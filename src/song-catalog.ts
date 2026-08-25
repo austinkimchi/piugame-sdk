@@ -434,7 +434,6 @@ export async function upsertSongCatalogDocuments(
         upsert: true,
       },
     })),
-    { ordered: false },
   );
 
   return {

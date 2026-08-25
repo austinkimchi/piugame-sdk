@@ -1,5 +1,5 @@
 import { load, type Cheerio, type CheerioAPI } from "cheerio";
-import type { Collection, Document, UpdateResult } from "mongodb";
+import type { Collection, Document } from "mongodb";
 
 import type { SongCatalogDocument } from "./song-catalog";
 
@@ -617,6 +617,7 @@ function parseEntriesForSection(
 export function parseNamuSeriesReference(html: string, sourceFile: string): SongSeriesReferenceParseResult {
   const $ = load(html);
   const sections = parseSeriesSections(html);
+  const sectionsById = new Map(sections.map((section) => [section.sectionId, section]));
   const entries: SongSeriesReferenceEntry[] = [];
 
   $("h2 > a[id^='s-'], h3 > a[id^='s-']").each((_, anchor) => {
@@ -626,7 +627,7 @@ export function parseNamuSeriesReference(html: string, sourceFile: string): Song
       return;
     }
 
-    const section = sections.find((candidate) => candidate.sectionId === sectionId);
+    const section = sectionsById.get(sectionId);
     if (!section) {
       return;
     }
@@ -921,6 +922,7 @@ export function assignSongSeriesToCatalogDocuments(
 
   const assigned: SongCatalogSeriesAssignment[] = [];
   const unresolved: SongCatalogSeriesUnresolved[] = [];
+  const referenceMatchCache = new Map<string, ReturnType<typeof pickReferenceCandidates>>();
   let manualOverrideCount = 0;
 
   for (const document of catalogDocuments) {
@@ -940,7 +942,12 @@ export function assignSongSeriesToCatalogDocuments(
       continue;
     }
 
-    const match = pickReferenceCandidates(document.songName, document.artist, indexes);
+    const matchCacheKey = `${document.songName}\u0000${document.artist}`;
+    let match = referenceMatchCache.get(matchCacheKey);
+    if (!match) {
+      match = pickReferenceCandidates(document.songName, document.artist, indexes);
+      referenceMatchCache.set(matchCacheKey, match);
+    }
     if (match.references.length === 0 || !match.method) {
       unresolved.push({
         songKey: document.songKey,
@@ -1028,35 +1035,33 @@ export async function upsertSongSeriesReferences(
   references: SongSeriesReferenceEntry[],
   updatedAt = nowIso(),
 ): Promise<SongSeriesUpsertResult> {
-  let matchedCount = 0;
-  let modifiedCount = 0;
-  let upsertedCount = 0;
-
-  for (const reference of references) {
-    const referenceKey = buildReferenceKey(reference);
-    const result = (await collection.updateOne(
-      { referenceKey },
-      {
-        $set: {
-          ...reference,
-          referenceKey,
-        },
-        $setOnInsert: {
-          updatedAt,
-        },
-      },
-      { upsert: true },
-    )) as UpdateResult;
-
-    matchedCount += result.matchedCount ?? 0;
-    modifiedCount += result.modifiedCount ?? 0;
-    upsertedCount += result.upsertedCount ?? 0;
+  if (references.length === 0) {
+    return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
   }
 
+  const result = await collection.bulkWrite(
+    references.map((reference) => {
+      const referenceKey = buildReferenceKey(reference);
+      return {
+        updateOne: {
+          filter: { referenceKey },
+          update: {
+            $set: {
+              ...reference,
+              referenceKey,
+            },
+            $setOnInsert: { updatedAt },
+          },
+          upsert: true,
+        },
+      };
+    }),
+  );
+
   return {
-    matchedCount,
-    modifiedCount,
-    upsertedCount,
+    matchedCount: result.matchedCount ?? 0,
+    modifiedCount: result.modifiedCount ?? 0,
+    upsertedCount: result.upsertedCount ?? 0,
   };
 }
 
@@ -1098,33 +1103,31 @@ export async function applySongSeriesAssignments(
   collection: Collection<SongCatalogSeriesDocument & Document>,
   assignments: SongCatalogSeriesAssignment[],
 ): Promise<SongSeriesUpsertResult> {
-  let matchedCount = 0;
-  let modifiedCount = 0;
-  let upsertedCount = 0;
-
-  for (const assignment of assignments) {
-    const result = (await collection.updateOne(
-      { songKey: assignment.songKey, artist: assignment.artist },
-      {
-        $set: {
-          series: assignment.series,
-          seriesSource: assignment.seriesSource,
-          seriesRule: assignment.seriesRule,
-          seriesConfidence: assignment.seriesConfidence,
-          seriesAssignedAt: assignment.seriesAssignedAt,
-        },
-      },
-      { upsert: false },
-    )) as UpdateResult;
-
-    matchedCount += result.matchedCount ?? 0;
-    modifiedCount += result.modifiedCount ?? 0;
-    upsertedCount += result.upsertedCount ?? 0;
+  if (assignments.length === 0) {
+    return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
   }
 
+  const result = await collection.bulkWrite(
+    assignments.map((assignment) => ({
+      updateOne: {
+        filter: { songKey: assignment.songKey, artist: assignment.artist },
+        update: {
+          $set: {
+            series: assignment.series,
+            seriesSource: assignment.seriesSource,
+            seriesRule: assignment.seriesRule,
+            seriesConfidence: assignment.seriesConfidence,
+            seriesAssignedAt: assignment.seriesAssignedAt,
+          },
+        },
+        upsert: false,
+      },
+    })),
+  );
+
   return {
-    matchedCount,
-    modifiedCount,
-    upsertedCount,
+    matchedCount: result.matchedCount ?? 0,
+    modifiedCount: result.modifiedCount ?? 0,
+    upsertedCount: result.upsertedCount ?? 0,
   };
 }

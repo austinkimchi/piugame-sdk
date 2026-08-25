@@ -31,6 +31,7 @@ function sampleCatalogDocument(songName: string, artist: string): SongCatalogDoc
 class FakeSeriesReferenceCollection {
   public readonly indexes: Array<{ key: Record<string, unknown>; options?: Record<string, unknown> }> = [];
   public readonly docs = new Map<string, SongSeriesReferenceDocument>();
+  public bulkWriteCalls = 0;
 
   public async createIndex(
     key: Record<string, unknown>,
@@ -40,11 +41,11 @@ class FakeSeriesReferenceCollection {
     return `idx_${this.indexes.length}`;
   }
 
-  public async updateOne(
+  private applyUpdate(
     filter: Record<string, unknown>,
     update: { $set: SongSeriesReferenceDocument },
     options: { upsert?: boolean },
-  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+  ): { matchedCount: number; modifiedCount: number; upsertedCount: number } {
     const key = String(filter.referenceKey);
     const current = this.docs.get(key);
     const next = update.$set;
@@ -67,6 +68,33 @@ class FakeSeriesReferenceCollection {
     };
   }
 
+  public async bulkWrite(
+    operations: Array<{
+      updateOne: {
+        filter: Record<string, unknown>;
+        update: { $set: SongSeriesReferenceDocument };
+        upsert?: boolean;
+      };
+    }>,
+  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+    this.bulkWriteCalls += 1;
+    return operations.reduce(
+      (total, operation) => {
+        const result = this.applyUpdate(
+          operation.updateOne.filter,
+          operation.updateOne.update,
+          { upsert: operation.updateOne.upsert },
+        );
+        return {
+          matchedCount: total.matchedCount + result.matchedCount,
+          modifiedCount: total.modifiedCount + result.modifiedCount,
+          upsertedCount: total.upsertedCount + result.upsertedCount,
+        };
+      },
+      { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 },
+    );
+  }
+
   public find(): { toArray: () => Promise<SongSeriesReferenceDocument[]> } {
     return {
       toArray: async () => Array.from(this.docs.values()),
@@ -76,12 +104,13 @@ class FakeSeriesReferenceCollection {
 
 class FakeSongCatalogCollection {
   public readonly docs = new Map<string, SongCatalogSeriesDocument>();
+  public bulkWriteCalls = 0;
 
-  public async updateOne(
+  private applyUpdate(
     filter: Record<string, unknown>,
     update: { $set: Partial<SongCatalogSeriesDocument> },
     options: { upsert?: boolean },
-  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+  ): { matchedCount: number; modifiedCount: number; upsertedCount: number } {
     const key = `${String(filter.songKey)}\u0000${String(filter.artist)}`;
     const current = this.docs.get(key);
     if (!current) {
@@ -101,6 +130,33 @@ class FakeSongCatalogCollection {
       modifiedCount: changed ? 1 : 0,
       upsertedCount: 0,
     };
+  }
+
+  public async bulkWrite(
+    operations: Array<{
+      updateOne: {
+        filter: Record<string, unknown>;
+        update: { $set: Partial<SongCatalogSeriesDocument> };
+        upsert?: boolean;
+      };
+    }>,
+  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+    this.bulkWriteCalls += 1;
+    return operations.reduce(
+      (total, operation) => {
+        const result = this.applyUpdate(
+          operation.updateOne.filter,
+          operation.updateOne.update,
+          { upsert: operation.updateOne.upsert },
+        );
+        return {
+          matchedCount: total.matchedCount + result.matchedCount,
+          modifiedCount: total.modifiedCount + result.modifiedCount,
+          upsertedCount: total.upsertedCount + result.upsertedCount,
+        };
+      },
+      { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 },
+    );
   }
 }
 
@@ -313,10 +369,13 @@ describe("song series persistence helpers", () => {
 
     const firstUpsert = await upsertSongSeriesReferences(referenceCollection as unknown as any, references);
     const secondUpsert = await upsertSongSeriesReferences(referenceCollection as unknown as any, references);
+    const emptyUpsert = await upsertSongSeriesReferences(referenceCollection as unknown as any, []);
 
     expect(firstUpsert.upsertedCount).toBe(1);
     expect(secondUpsert.upsertedCount).toBe(0);
     expect(secondUpsert.modifiedCount).toBe(0);
+    expect(emptyUpsert).toEqual({ matchedCount: 0, modifiedCount: 0, upsertedCount: 0 });
+    expect(referenceCollection.bulkWriteCalls).toBe(2);
 
     const songKey = "Song XX";
     const artist = "Artist XX";
@@ -339,8 +398,11 @@ describe("song series persistence helpers", () => {
 
     const firstApply = await applySongSeriesAssignments(catalogCollection as unknown as any, assignments);
     const secondApply = await applySongSeriesAssignments(catalogCollection as unknown as any, assignments);
+    const emptyApply = await applySongSeriesAssignments(catalogCollection as unknown as any, []);
 
     expect(firstApply.modifiedCount).toBe(1);
     expect(secondApply.modifiedCount).toBe(0);
+    expect(emptyApply).toEqual({ matchedCount: 0, modifiedCount: 0, upsertedCount: 0 });
+    expect(catalogCollection.bulkWriteCalls).toBe(2);
   });
 });
