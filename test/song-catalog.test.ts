@@ -42,6 +42,7 @@ const SONG_LIST_HTML = `
 class FakeSongCatalogCollection {
   public readonly indexes: Array<{ key: Record<string, unknown>; options?: Record<string, unknown> }> = [];
   public readonly documents = new Map<string, SongCatalogDocument>();
+  public bulkWriteCalls = 0;
 
   public async createIndex(
     key: Record<string, unknown>,
@@ -51,11 +52,11 @@ class FakeSongCatalogCollection {
     return `idx_${this.indexes.length}`;
   }
 
-  public async updateOne(
+  private applyUpdate(
     filter: Record<string, unknown>,
     update: { $set: SongCatalogDocument },
     options: { upsert?: boolean },
-  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+  ): { matchedCount: number; modifiedCount: number; upsertedCount: number } {
     const key = `${String(filter.songKey)}\u0000${String(filter.artist)}`;
     const next = update.$set;
     const current = this.documents.get(key);
@@ -76,6 +77,33 @@ class FakeSongCatalogCollection {
       modifiedCount: changed ? 1 : 0,
       upsertedCount: 0,
     };
+  }
+
+  public async bulkWrite(
+    operations: Array<{
+      updateOne: {
+        filter: Record<string, unknown>;
+        update: { $set: SongCatalogDocument };
+        upsert?: boolean;
+      };
+    }>,
+  ): Promise<{ matchedCount: number; modifiedCount: number; upsertedCount: number }> {
+    this.bulkWriteCalls += 1;
+    return operations.reduce(
+      (total, operation) => {
+        const result = this.applyUpdate(
+          operation.updateOne.filter,
+          operation.updateOne.update,
+          { upsert: operation.updateOne.upsert },
+        );
+        return {
+          matchedCount: total.matchedCount + result.matchedCount,
+          modifiedCount: total.modifiedCount + result.modifiedCount,
+          upsertedCount: total.upsertedCount + result.upsertedCount,
+        };
+      },
+      { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 },
+    );
   }
 }
 
@@ -161,12 +189,15 @@ describe("song catalog integration", () => {
     await ensureSongCatalogIndexes(collection as unknown as any);
     const first = await upsertSongCatalogDocuments(collection as unknown as any, built.documents);
     const second = await upsertSongCatalogDocuments(collection as unknown as any, built.documents);
+    const empty = await upsertSongCatalogDocuments(collection as unknown as any, []);
 
     expect(collection.indexes).toHaveLength(2);
+    expect(collection.bulkWriteCalls).toBe(2);
     expect(collection.documents.size).toBe(built.uniqueSongs);
     expect(first.upsertedCount).toBe(built.uniqueSongs);
     expect(second.upsertedCount).toBe(0);
     expect(second.modifiedCount).toBe(0);
+    expect(empty).toEqual({ matchedCount: 0, modifiedCount: 0, upsertedCount: 0 });
     expect(built.totalRows).toBe(3);
     expect(built.parsedRows + built.skippedRows).toBe(built.totalRows);
 

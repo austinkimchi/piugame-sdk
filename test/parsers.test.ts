@@ -322,4 +322,42 @@ describe("parsers", () => {
 
     expect(extractLastPageNumber(BEST_SCORE_HTML)).toBe(23);
   });
+
+  test("keeps sparse rows isolated and tolerates missing step-ball markup", () => {
+    const sparseRecentHtml = `
+      <ul class="recently_playeList">
+        <li>
+          <div class="song_name"><p>First Song</p></div>
+          <div class="con2"><ul class="list"><li></li><li><div class="tx">123,456</div></li><li></li></ul></div>
+          <table class="recently_play"><tr><td data-th="Perfect"><span class="tx">10</span></td></tr></table>
+        </li>
+        <li>
+          <div class="song_name"><p>Second Song</p></div>
+          <div class="stepBall_in">
+            <div class="tw"><img src="/l_img/stepball/full/d_text.png"></div>
+            <div class="numw"><img src="/l_img/stepball/full/d_num_0.png"><img src="/l_img/stepball/full/d_guess.png"></div>
+          </div>
+          <div class="con2"><ul class="list"><li></li><li><div class="tx">STAGE BREAK</div></li><li></li></ul></div>
+          <table class="recently_play"><tr><td data-th="Miss"><span class="tx">7</span></td></tr></table>
+        </li>
+      </ul>`;
+
+    const plays = parseRecentPlays(sparseRecentHtml);
+
+    expect(plays).toEqual([
+      expect.objectContaining({
+        songName: "First Song", mode: null, level: null, score: 123456, stageBreak: false,
+        judgments: { perfect: 10, great: null, good: null, bad: null, miss: null },
+      }),
+      expect.objectContaining({
+        songName: "Second Song", mode: "D", level: "0?", score: null, stageBreak: true,
+        judgments: { perfect: null, great: null, good: null, bad: null, miss: 7 },
+      }),
+    ]);
+  });
+
+  test("uses the numeric pagination fallback when no last-page button exists", () => {
+    const html = `<div class="board_paging"><button>1</button><button>  7 </button><button>not a page</button></div>`;
+    expect(extractLastPageNumber(html)).toBe(7);
+  });
 });

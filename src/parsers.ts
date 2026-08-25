@@ -1,5 +1,7 @@
 ﻿import { load } from "cheerio";
 
+import type { Cheerio } from "cheerio";
+
 import { ParseError } from "./errors";
 import type {
   BestPlay,
@@ -159,14 +161,14 @@ function normalizeChartLevel(level: string): string {
   return `${Number.parseInt(level, 10)}`;
 }
 
-function parseStepBall(containerHtml: ReturnType<typeof load>): { mode: string | null; level: string | null } {
-  const modeImg = containerHtml(".tw img").attr("src");
+function parseStepBall(container: Cheerio<any>): { mode: string | null; level: string | null } {
+  const modeImg = container.find(".tw img").attr("src");
   const modeMatch = modeImg ? /\/([^/]+)_text\.png/i.exec(modeImg) : null;
   const mode = modeMatch?.[1]?.toUpperCase() ?? null;
 
   const levelParts: string[] = [];
-  containerHtml(".numw img").each((_, img) => {
-    const src = containerHtml(img).attr("src");
+  container.find(".numw img").each((_, img) => {
+    const src = container.find(img).attr("src");
     const levelMatch = src ? /(?:_num_([^/.?#]+)|_guess)\.png/i.exec(src) : null;
     if (levelMatch) {
       const part = levelMatch[1] ?? "?";
@@ -181,13 +183,13 @@ function parseStepBall(containerHtml: ReturnType<typeof load>): { mode: string |
   };
 }
 
-function parseStepBallFromElement(root: ReturnType<typeof load>, selector: string): { mode: string | null; level: string | null } {
-  const html = root(selector).first().html();
-  if (!html) {
+function parseStepBallFromElement(root: Cheerio<any>, selector: string): { mode: string | null; level: string | null } {
+  const container = root.find(selector).first();
+  if (container.length === 0) {
     return { mode: null, level: null };
   }
 
-  return parseStepBall(load(html));
+  return parseStepBall(container);
 }
 
 function parseGameIdTag(gameIdTag: string | null): { gameId: string | null; gameTag: string | null } {
@@ -318,8 +320,7 @@ export function parseTopPlays(html: string): TopPlay[] {
     }
 
     const rank = parseNumber(root.find(".num .img_wrap .num .tt").first().text()) ?? plays.length + 1;
-    const localRoot = load(root.html() ?? "");
-    const { mode, level } = parseStepBallFromElement(localRoot, ".stepBall_in");
+    const { mode, level } = parseStepBallFromElement(root, ".stepBall_in");
     const gradeSrc = root.find(".grade_wrap img").first().attr("src");
 
     plays.push({
@@ -389,7 +390,7 @@ export function parseRecentPlays(html: string): RecentPlay[] {
       }
     });
 
-    const { mode, level } = parseStepBallFromElement(load(root.html() ?? ""), ".stepBall_in");
+    const { mode, level } = parseStepBallFromElement(root, ".stepBall_in");
 
     plays.push({
       songName,
@@ -471,8 +472,7 @@ export function parseOwnedTitleCount(html: string): number | null {
   return parseNumber($(".board_search .total_wrap .t2").first().text());
 }
 
-export function extractLastPageNumber(html: string): number | null {
-  const $ = load(html);
+function extractLastPageNumberFromDocument($: ReturnType<typeof load>): number | null {
   const paging = $(".board_paging").first();
   if (paging.length === 0) {
     return null;
@@ -505,6 +505,10 @@ export function extractLastPageNumber(html: string): number | null {
   return maxNumeric;
 }
 
+export function extractLastPageNumber(html: string): number | null {
+  return extractLastPageNumberFromDocument(load(html));
+}
+
 export function parseBestScorePage(html: string, page: number): BestScorePage {
   const $ = load(html);
   const items = $(".my_best_scoreList > li");
@@ -518,8 +522,7 @@ export function parseBestScorePage(html: string, page: number): BestScorePage {
       return;
     }
 
-    const localRoot = load(root.html() ?? "");
-    const { mode, level } = parseStepBallFromElement(localRoot, ".stepBall_in");
+    const { mode, level } = parseStepBallFromElement(root, ".stepBall_in");
 
     plays.push({
       songName,
@@ -535,7 +538,7 @@ export function parseBestScorePage(html: string, page: number): BestScorePage {
   return {
     page,
     total: parseNumber($(".board_search .total_wrap .t2").first().text()),
-    lastPage: extractLastPageNumber(html),
+    lastPage: extractLastPageNumberFromDocument($),
     plays,
   };
 }

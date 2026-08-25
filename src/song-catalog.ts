@@ -1,5 +1,5 @@
 import { load } from "cheerio";
-import type { Collection, Document, UpdateResult } from "mongodb";
+import type { Collection, Document } from "mongodb";
 
 export type SongChartScope = "basic" | "full";
 
@@ -422,27 +422,24 @@ export async function upsertSongCatalogDocuments(
   collection: Collection<SongCatalogDocument & Document>,
   documents: SongCatalogDocument[],
 ): Promise<SongCatalogUpsertResult> {
-  let matchedCount = 0;
-  let modifiedCount = 0;
-  let upsertedCount = 0;
-
-  for (const document of documents) {
-    const result = (await collection.updateOne(
-      { songKey: document.songKey, artist: document.artist },
-      {
-        $set: document,
-      },
-      { upsert: true },
-    )) as UpdateResult;
-
-    matchedCount += result.matchedCount ?? 0;
-    modifiedCount += result.modifiedCount ?? 0;
-    upsertedCount += result.upsertedCount ?? 0;
+  if (documents.length === 0) {
+    return { matchedCount: 0, modifiedCount: 0, upsertedCount: 0 };
   }
 
+  const result = await collection.bulkWrite(
+    documents.map((document) => ({
+      updateOne: {
+        filter: { songKey: document.songKey, artist: document.artist },
+        update: { $set: document },
+        upsert: true,
+      },
+    })),
+    { ordered: false },
+  );
+
   return {
-    matchedCount,
-    modifiedCount,
-    upsertedCount,
+    matchedCount: result.matchedCount ?? 0,
+    modifiedCount: result.modifiedCount ?? 0,
+    upsertedCount: result.upsertedCount ?? 0,
   };
 }
