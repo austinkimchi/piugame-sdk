@@ -557,6 +557,7 @@ function createDefaultTransport(
 
 export class PiuClient {
   private readonly baseUrl: string;
+  private readonly piuVersion: PiuGameVersion;
   private readonly cacheNamespace: string;
   private readonly timeoutMs: number;
   private readonly fetchAllPlaysConcurrency: number;
@@ -582,6 +583,7 @@ export class PiuClient {
 
   public constructor(options: PiuClientOptions = {}) {
     this.baseUrl = resolveBaseUrl(options);
+    this.piuVersion = options.version ?? DEFAULT_PIU_VERSION;
     this.cacheNamespace = cacheNamespaceFromBaseUrl(this.baseUrl);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.fetchAllPlaysConcurrency = normalizePositiveInteger(
@@ -987,7 +989,7 @@ export class PiuClient {
       return;
     }
 
-    await this.mongoStorage.upsertTitleCatalog(titles);
+    await this.mongoStorage.upsertTitleCatalog(this.piuVersion, titles);
   }
 
   private async getCachedParsedEndpoint<T>(options: {

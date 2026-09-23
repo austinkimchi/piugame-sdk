@@ -37,6 +37,8 @@ export type {
   TopPlay,
   TopPlayMode,
   TitleEntry,
+  TitleRequirement,
+  TitleRequirementMetric,
   TitleUpdateResult,
   TransportRequest,
   TransportResponse,
