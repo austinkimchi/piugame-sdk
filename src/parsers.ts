@@ -453,6 +453,26 @@ function normalizeTitleStatus(statusText: string | null): {
   };
 }
 
+function parseTitleRequirement(description: string): TitleEntry["requirement"] {
+  const definition = /\b(Single|Double|Total)\s+Pumbility\s+of\s+([\d,.]+)\s*\+/i.exec(description);
+  if (!definition) {
+    return null;
+  }
+
+  const target = parseNumber(definition[2]);
+  if (target === null) {
+    return null;
+  }
+
+  const progress = /\[\s*([\d,.]+)\s*\/\s*([\d,.]+)\s*\]/.exec(description);
+  const metric = `${definition[1].toLowerCase()}_pumbility` as NonNullable<TitleEntry["requirement"]>["metric"];
+  return {
+    metric,
+    current: progress ? parseNumber(progress[1]) : null,
+    target: progress ? (parseNumber(progress[2]) ?? target) : target,
+  };
+}
+
 export function parseTitleEntries(html: string): TitleEntry[] {
   const results: TitleEntry[] = [];
   const titleListHtml = extractClassHtml(html, "data_titleList2");
@@ -468,6 +488,7 @@ export function parseTitleEntries(html: string): TitleEntry[] {
     const className = cleanText(attributes.class);
     const titleText = extractClassText(entryHtml, "txt_w");
     const descriptionText = extractClassText(entryHtml, "txt_w2");
+    const requirementProgressText = extractClassText(entryHtml, "require-count");
     const statusText = cleanHtmlText(extractClassHtml(entryHtml, "state_w")) || null;
     const status = normalizeTitleStatus(statusText);
     const owned = className.split(/\s+/).includes("have");
@@ -483,6 +504,7 @@ export function parseTitleEntries(html: string): TitleEntry[] {
       settable: status.settable,
       unlockable: status.unlockable,
       statusText,
+      requirement: parseTitleRequirement(`${descriptionText} ${requirementProgressText}`),
     });
   }
 

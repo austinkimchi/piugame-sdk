@@ -17,6 +17,17 @@ export type PiuGameVersion = "phoenix" | "phoenix2";
 
 export type TopPlayMode = "all" | "single" | "double";
 
+export type TitleRequirementMetric =
+  | "single_pumbility"
+  | "double_pumbility"
+  | "total_pumbility";
+
+export interface TitleRequirement {
+  metric: TitleRequirementMetric;
+  current: number | null;
+  target: number;
+}
+
 export interface PiuClientOptions {
   baseUrl?: string;
   version?: PiuGameVersion;
@@ -104,6 +115,7 @@ export interface TitleEntry {
   settable: boolean;
   unlockable: boolean;
   statusText: string | null;
+  requirement: TitleRequirement | null;
 }
 
 export interface TitleUpdateResult {

@@ -1,6 +1,6 @@
 ﻿import { MongoClient, type Collection } from "mongodb";
 
-import type { EndpointName, SerializableCookie, StoredSession, TitleEntry } from "../types";
+import type { EndpointName, PiuGameVersion, SerializableCookie, StoredSession, TitleEntry } from "../types";
 
 interface SessionDocument {
   username: string;
@@ -19,9 +19,14 @@ interface CacheDocument {
 }
 
 interface TitleCatalogDocument {
+  piuVersion: PiuGameVersion;
   normalizedName: string;
   name: string;
   description: string | null;
+  requirementMetric: (TitleEntry["requirement"] extends infer R
+    ? R extends { metric: infer M } ? M : never
+    : never) | null;
+  requirementTarget: number | null;
   updatedAt: Date;
 }
 
@@ -141,7 +146,7 @@ export class MongoStorage {
     await Promise.all([this.clearSession(username), this.clearUserCache(username)]);
   }
 
-  public async upsertTitleCatalog(titles: TitleEntry[]): Promise<void> {
+  public async upsertTitleCatalog(piuVersion: PiuGameVersion, titles: TitleEntry[]): Promise<void> {
     if (titles.length === 0) {
       return;
     }
@@ -150,12 +155,15 @@ export class MongoStorage {
     await this.titles.bulkWrite(
       titles.map((title) => ({
         updateOne: {
-          filter: { normalizedName: normalizeTitleName(title.name) },
+          filter: { piuVersion, normalizedName: normalizeTitleName(title.name) },
           update: {
             $set: {
+              piuVersion,
               normalizedName: normalizeTitleName(title.name),
               name: title.name,
               description: title.description,
+              requirementMetric: title.requirement?.metric ?? null,
+              requirementTarget: title.requirement?.target ?? null,
               updatedAt,
             },
           },
@@ -173,7 +181,21 @@ export class MongoStorage {
     await this.cache.createIndex({ username: 1 });
     await this.cache.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-    await this.titles.createIndex({ normalizedName: 1 }, { unique: true });
+    const titleIndexes = await this.titles.indexes();
+    const legacyTitleIndexes = titleIndexes.filter(
+      (index) =>
+        index.name !== "_id_" &&
+        index.unique === true &&
+        Object.hasOwn(index.key ?? {}, "normalizedName") &&
+        !Object.hasOwn(index.key ?? {}, "piuVersion"),
+    );
+    await Promise.all(
+      legacyTitleIndexes
+        .map((index) => index.name)
+        .filter((name): name is string => Boolean(name))
+        .map((name) => this.titles.dropIndex(name)),
+    );
+    await this.titles.createIndex({ piuVersion: 1, normalizedName: 1 }, { unique: true });
   }
 }
 

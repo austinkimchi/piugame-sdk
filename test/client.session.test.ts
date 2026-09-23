@@ -1944,7 +1944,7 @@ describe("PiuClient session manager", () => {
     (client as any).mongoStorage = {
       getSession: async () => null,
       setSession: async () => undefined,
-      upsertTitleCatalog: async (titles: unknown[]) => {
+      upsertTitleCatalog: async (_piuVersion: string, titles: unknown[]) => {
         upsertedCatalogs.push(titles);
       },
     };

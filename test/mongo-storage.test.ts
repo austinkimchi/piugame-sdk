@@ -15,6 +15,7 @@ function titleEntry(name: string, description: string | null): TitleEntry {
     settable: true,
     unlockable: false,
     statusText: "Set",
+    requirement: null,
   };
 }
 
@@ -34,6 +35,12 @@ describe("MongoStorage", () => {
             createIndex: async (...args: unknown[]) => {
               indexes[name].push(args);
             },
+            indexes: async () => name === "titles"
+              ? [{ name: "_id_", key: { _id: 1 } }, { name: "normalizedName_1", key: { normalizedName: 1 }, unique: true }]
+              : [{ name: "_id_", key: { _id: 1 } }],
+            dropIndex: async (indexName: string) => {
+              indexes[name].push(["drop", indexName]);
+            },
           };
         },
       }),
@@ -43,26 +50,28 @@ describe("MongoStorage", () => {
     const storage = new (MongoStorage as any)(fakeClient);
 
     await (storage as any).ensureIndexes();
-    await storage.upsertTitleCatalog([
+    await storage.upsertTitleCatalog("phoenix2", [
       titleEntry("SUNNY FOLLOWER", "[SUNNY STEP] 100+ Plays"),
       titleEntry("BEGINNER", null),
     ]);
 
-    expect(indexes.titles).toEqual([
-      [{ normalizedName: 1 }, { unique: true }],
-    ]);
+    expect(indexes.titles).toContainEqual(["drop", "normalizedName_1"]);
+    expect(indexes.titles).toContainEqual([{ piuVersion: 1, normalizedName: 1 }, { unique: true }]);
     expect(indexes.titles.some(([, options]) => {
       return Boolean((options as { expireAfterSeconds?: number }).expireAfterSeconds);
     })).toBe(false);
     expect(bulkWrites.titles).toMatchObject([
       {
         updateOne: {
-          filter: { normalizedName: "sunny follower" },
+          filter: { piuVersion: "phoenix2", normalizedName: "sunny follower" },
           update: {
             $set: {
+              piuVersion: "phoenix2",
               normalizedName: "sunny follower",
               name: "SUNNY FOLLOWER",
               description: "[SUNNY STEP] 100+ Plays",
+              requirementMetric: null,
+              requirementTarget: null,
             },
           },
           upsert: true,
@@ -70,12 +79,15 @@ describe("MongoStorage", () => {
       },
       {
         updateOne: {
-          filter: { normalizedName: "beginner" },
+          filter: { piuVersion: "phoenix2", normalizedName: "beginner" },
           update: {
             $set: {
+              piuVersion: "phoenix2",
               normalizedName: "beginner",
               name: "BEGINNER",
               description: null,
+              requirementMetric: null,
+              requirementTarget: null,
             },
           },
           upsert: true,

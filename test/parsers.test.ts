@@ -196,6 +196,11 @@ const TITLE_HTML = `
     <div class="txt_w"><div class="txt">DOMINION CHALLENGER</div></div>
     <div class="state_w"><div class="stateBox"><div class="tt">Not achieving the unlock condition</div></div></div>
   </li>
+  <li class="not" data-name="[S] ADVANCED LV.5">
+    <div class="txt_w"><div class="txt">[S] ADVANCED LV.5</div></div>
+    <div class="txt_w2"><div class="txt">Single Pumbility of 16000 +</div><p class="require-count"><i class="txt">[ 15,828.94 / 16,000 ]</i></p></div>
+    <div class="state_w"><div class="stateBox"><div class="tt">Not achieving the unlock condition</div></div></div>
+  </li>
   <li class="have" data-name="BEGINNER">
     <div class="txt_w"><div class="txt">BEGINNER</div></div>
     <form action="https://www.piugame.com/logic/user_title_update.php" method="post">
@@ -355,7 +360,7 @@ describe("parsers", () => {
     const titles = parseTitleEntries(TITLE_HTML);
 
     expect(ownedCount).toBe(8);
-    expect(titles.length).toBe(4);
+    expect(titles.length).toBe(5);
 
     const inUse = titles.find((title) => title.name === "CONRAD FOLLOWER");
     expect(inUse).toBeTruthy();
@@ -376,6 +381,13 @@ describe("parsers", () => {
     expect(locked?.owned).toBe(false);
     expect(locked?.locked).toBe(true);
     expect(locked?.setToken).toBeNull();
+
+    const nextTitle = titles.find((title) => title.name === "[S] ADVANCED LV.5");
+    expect(nextTitle?.requirement).toEqual({
+      metric: "single_pumbility",
+      current: 15_828.94,
+      target: 16_000,
+    });
 
     const beginner = titles.find((title) => title.name === "BEGINNER");
     expect(beginner).toBeTruthy();
