@@ -15,6 +15,8 @@ export interface CacheTtlConfig {
 
 export type PiuGameVersion = "phoenix" | "phoenix2";
 
+export type TopPlayMode = "all" | "single" | "double";
+
 export interface PiuClientOptions {
   baseUrl?: string;
   version?: PiuGameVersion;
@@ -86,6 +88,7 @@ export interface TopPlay {
   mode: string | null;
   level: string | null;
   grade: string | null;
+  plate?: string | null;
   score: number | null;
   playedAt: string | null;
 }

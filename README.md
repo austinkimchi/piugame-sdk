@@ -59,7 +59,7 @@ Advanced callers can still pass `baseUrl` directly; when provided, it overrides 
 - `logout(username)`
 - `getPlayerData(username)`
 - `getRecentPlays(username)`
-- `getTopPlays(username)`
+- `getTopPlays(username, mode?)`
 - `getTitle(username)`
 - `setTitle(username, titleName)`
 - `refresh(username)`
@@ -68,11 +68,21 @@ Advanced callers can still pass `baseUrl` directly; when provided, it overrides 
 
 `fetchAllPlays` fetches detected score pages concurrently. The default is bounded at 8 requests; tune it with `new PiuClient({ fetchAllPlaysConcurrency: 4 })` if you want a gentler crawl.
 
+`getTopPlays` accepts `"all"`, `"single"`, or `"double"` and defaults to `"all"`:
+
+```ts
+const allTopPlays = await client.getTopPlays(username);
+const singleTopPlays = await client.getTopPlays(username, "single");
+const doubleTopPlays = await client.getTopPlays(username, "double");
+```
+
+PHOENIX returns integer Pumbility scores and play dates. PHOENIX 2 returns decimal scores and currently omits play dates, so `TopPlay.playedAt` is `null` for those entries. PHOENIX 2 entries also include `plate` when the page provides it.
+
 ### Top-level wrappers
 
 Also exported for convenience:
 
-- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays`, `get_title`, `set_title`, `refresh`, `fetch_all_plays`, `set_database`
+- `login`, `logout`, `get_player_data`, `get_recent_plays`, `get_top_plays(username, mode?)`, `get_title`, `set_title`, `refresh`, `fetch_all_plays`, `set_database`
 
 ## MongoDB Cache + Session Persistence
 

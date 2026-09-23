@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     console.log("Data:", playerData);
 
     // mark("get-top-plays");
-    // const topScores = await client.getTopPlays(username);
+    // const topScores = await client.getTopPlays(username, "all");
     // console.log("Top Plays:", topScores);
 
     // mark("get-recent-plays");

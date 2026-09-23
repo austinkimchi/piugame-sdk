@@ -4,6 +4,7 @@ import type {
   PlayerData,
   RecentPlay,
   TopPlay,
+  TopPlayMode,
   TitleEntry,
   TitleUpdateResult,
 } from "./types";
@@ -34,6 +35,7 @@ export type {
   SerializableCookie,
   StoredSession,
   TopPlay,
+  TopPlayMode,
   TitleEntry,
   TitleUpdateResult,
   TransportRequest,
@@ -62,8 +64,11 @@ export async function get_recent_plays(username: string): Promise<RecentPlay[]> 
   return defaultClient.getRecentPlays(username);
 }
 
-export async function get_top_plays(username: string): Promise<TopPlay[]> {
-  return defaultClient.getTopPlays(username);
+export async function get_top_plays(
+  username: string,
+  mode: TopPlayMode = "all",
+): Promise<TopPlay[]> {
+  return defaultClient.getTopPlays(username, mode);
 }
 
 export async function get_title(username: string): Promise<TitleEntry[]> {

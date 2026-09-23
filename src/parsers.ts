@@ -13,7 +13,7 @@ import type {
   TitleEntry,
 } from "./types";
 
-const NUMBER_PATTERN = /-?\d[\d,]*/;
+const NUMBER_PATTERN = /-?\d[\d,]*(?:\.\d+)?/;
 const TITLE_ENTRY_PATTERN = /<li\b([^>]*)>([\s\S]*?)<\/li>/gi;
 const ATTRIBUTE_PATTERN = /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
 const HTML_ENTITY_PATTERN = /&(#x[\da-f]+|#\d+|[a-z]+);/gi;
@@ -108,7 +108,7 @@ function normalizeGameIdTag(value: string | undefined | null): string | null {
 }
 
 function parseNumber(value: string | undefined | null): number | null {
-  const text = cleanText(value);
+  const text = cleanText(value).replace(/\s+(?=\.\d)/g, "");
   const match = text.match(NUMBER_PATTERN);
   if (!match) {
     return null;
@@ -301,19 +301,41 @@ export function parsePumbilityScore(html: string): number | null {
   }
 
   return parseNumber(
-    $(".pumbility_total_wrap .inn .t2, .pumbility_total_wrap .in_bg1 .t2").first().text(),
+    $(
+      ".pumbility_total_wrap .score, .pumbility_total_wrap .inn .t2, .pumbility_total_wrap .in_bg1 .t2",
+    )
+      .first()
+      .text(),
   );
 }
 
 export function parseTopPlays(html: string): TopPlay[] {
   const $ = load(html);
-  const scopedEntries = $(".rating_rangking_list_w.pumblitiySt .list > li");
-  const entries = scopedEntries.length > 0 ? scopedEntries : $(".rating_rangking_list_w .list > li");
+  const phoenix2Entries = $(".rating_rangking_list_w.pumblitiySt .list2 > li");
+  const phoenixEntries = $(".rating_rangking_list_w.pumblitiySt .list > li");
+  const entries =
+    phoenix2Entries.length > 0
+      ? phoenix2Entries
+      : phoenixEntries.length > 0
+        ? phoenixEntries
+        : $(".rating_rangking_list_w .list > li, .rating_rangking_list_w .list2 > li");
   const plays: TopPlay[] = [];
 
   entries.each((_, entry) => {
     const root = $(entry);
-    const songName = cleanText(root.find(".profile_name .t1").first().text());
+    const phoenixSongName = cleanText(root.find(".profile_name .t1").first().text());
+    const phoenixArtist = cleanText(root.find(".profile_name .t2").first().text()) || null;
+    const phoenix2Label = cleanText(root.find(".mid-wrap").first().text());
+    const phoenix2SeparatorIndex = phoenix2Label.lastIndexOf(" - ");
+    const phoenix2SongName =
+      phoenix2SeparatorIndex > 0
+        ? phoenix2Label.slice(0, phoenix2SeparatorIndex).trim()
+        : phoenix2Label;
+    const phoenix2Artist =
+      phoenix2SeparatorIndex > 0
+        ? phoenix2Label.slice(phoenix2SeparatorIndex + 3).trim() || null
+        : null;
+    const songName = phoenixSongName || phoenix2SongName;
 
     if (!songName) {
       return;
@@ -321,17 +343,21 @@ export function parseTopPlays(html: string): TopPlay[] {
 
     const rank = parseNumber(root.find(".num .img_wrap .num .tt").first().text()) ?? plays.length + 1;
     const { mode, level } = parseStepBallFromElement(root, ".stepBall_in");
-    const gradeSrc = root.find(".grade_wrap img").first().attr("src");
+    const gradeSrc = root.find(".grade_wrap img, .bottom-wrap .grade img").first().attr("src");
+    const plateSrc = root.find(".bottom-wrap .plate img").first().attr("src");
 
     plays.push({
       rank,
       songName,
-      artist: cleanText(root.find(".profile_name .t2").first().text()) || null,
-      songImageUrl: parseBackgroundImageUrl(root.find(".profile_img .re").first().attr("style")),
+      artist: phoenixArtist ?? phoenix2Artist,
+      songImageUrl: parseBackgroundImageUrl(
+        root.find(".profile_img .re, .top-wrap").first().attr("style"),
+      ),
       mode,
       level,
       grade: parseAssetCode(gradeSrc, "grade") ?? parseFileBasenameCode(gradeSrc),
-      score: parseNumber(root.find(".score .tt").first().text()),
+      plate: parseAssetCode(plateSrc, "plate") ?? parseFileBasenameCode(plateSrc),
+      score: parseNumber(root.find(".score .tt, .bottom-wrap .score").first().text()),
       playedAt: cleanText(root.find(".date .tt").first().text()) || null,
     });
   });

@@ -83,6 +83,27 @@ const PUMBILITY_TOP_HTML = `
 </div>
 `;
 
+const PHOENIX2_PUMBILITY_TOP_HTML = `
+<div class="rating_rangking_list_w top_songSt pumblitiySt">
+  <ul class="list2">
+    <li>
+      <div class="top-wrap" style="background-image:url('https://www.piugame.com/data/song_img2/etude.png')">
+        <div class="stepBall_in">
+          <div class="tw"><img src="https://www.piugame.com/l_img/p2/stepball/full/s_text.png" /></div>
+          <div class="numw"><img src="https://www.piugame.com/l_img/p2/stepball/full/s_num_1.png" /><img src="https://www.piugame.com/l_img/p2/stepball/full/s_num_7.png" /></div>
+        </div>
+      </div>
+      <div class="mid-wrap">Etude Op 10-4 - MAX</div>
+      <div class="bottom-wrap">
+        <div class="in grade"><img src="https://www.piugame.com/l_img/p2/grade/ss.png" /></div>
+        <div class="in plate"><img src="https://www.piugame.com/l_img/plate/s_sg.png" /></div>
+        <div class="in score"><div>325<span class="pumbility-point-sub">.16</span></div></div>
+      </div>
+    </li>
+  </ul>
+</div>
+`;
+
 function titleHtml(activeTitle: "CONRAD FOLLOWER" | "SUNNY FOLLOWER" = "CONRAD FOLLOWER"): string {
   const conradInUse = activeTitle === "CONRAD FOLLOWER";
   const sunnyInUse = activeTitle === "SUNNY FOLLOWER";
@@ -663,6 +684,48 @@ describe("PiuClient session manager", () => {
     expect(topPlays[0]?.songName).toBe("Spray");
     expect(topPlays[0]?.score).toBe(300);
     expect(topPlays[49]?.rank).toBe(50);
+  });
+
+  test("getTopPlays sends PHOENIX 2 mode filters and caches each mode separately", async () => {
+    const requestedFilters: Array<string | null> = [];
+
+    const transport: HttpTransport = async (request) => {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/bbs/login_check.php") {
+        return response(302, "", {
+          location: "/",
+          "set-cookie": [
+            "sid=mocksid; Path=/; Domain=.piugame.com; Max-Age=3600",
+            "PHPSESSID=mockphp; Path=/",
+          ],
+        });
+      }
+
+      if (url.pathname === "/my_page/pumbility.php") {
+        requestedFilters.push(url.searchParams.get("t"));
+        return response(200, PHOENIX2_PUMBILITY_TOP_HTML, {});
+      }
+
+      if (url.pathname === "/my_page/play_data.php") {
+        return response(200, PLAY_DATA_HTML, {});
+      }
+
+      return response(404, "not found");
+    };
+
+    const client = new PiuClient({ version: "phoenix2", transport });
+    await client.login("fixture_user", "fixture_password");
+
+    const all = await client.getTopPlays("fixture_user");
+    const single = await client.getTopPlays("fixture_user", "single");
+    const double = await client.getTopPlays("fixture_user", "double");
+    await client.getTopPlays("fixture_user", "single");
+
+    expect(requestedFilters).toEqual(["", "s", "d"]);
+    expect(all[0]?.score).toBe(325.16);
+    expect(single[0]?.playedAt).toBeNull();
+    expect(double[0]?.plate).toBe("s_sg");
   });
 
   test("expired session triggers automatic relogin", async () => {

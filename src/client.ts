@@ -36,6 +36,7 @@ import type {
   SerializableCookie,
   StoredSession,
   TopPlay,
+  TopPlayMode,
   TransportRequest,
   TransportResponse,
   TitleEntry,
@@ -727,15 +728,21 @@ export class PiuClient {
     return plays;
   }
 
-  public async getTopPlays(username: string): Promise<TopPlay[]> {
+  public async getTopPlays(
+    username: string,
+    mode: TopPlayMode = "all",
+  ): Promise<TopPlay[]> {
+    const filter = topPlayModeQueryValue(mode);
+
     return this.getCachedParsedEndpoint({
       username,
       endpoint: "top_plays",
+      suffix: `:${mode}`,
       cacheTtlMs: this.cacheTtl.topPlaysMs,
       loader: async () => {
         const response = await this.authenticatedRequest(username, {
           method: "GET",
-          path: "/my_page/pumbility.php",
+          path: `/my_page/pumbility.php?t=${filter}`,
           redirect: "manual",
         });
 
@@ -2466,5 +2473,18 @@ export class PiuClient {
       });
     }
   }
+}
 
+function topPlayModeQueryValue(mode: TopPlayMode): string {
+  if (mode === "all") {
+    return "";
+  }
+  if (mode === "single") {
+    return "s";
+  }
+  if (mode === "double") {
+    return "d";
+  }
+
+  throw new RangeError(`Unsupported top-play mode: ${String(mode)}`);
 }

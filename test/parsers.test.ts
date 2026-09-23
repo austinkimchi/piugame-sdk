@@ -108,6 +108,15 @@ const PUMBILITY_SCORE_HTML = `
 </div>
 `;
 
+const PHOENIX2_PUMBILITY_SCORE_HTML = `
+<div class="pumbility_total_wrap">
+  <div class="info-wrap">
+    <div class="title">GOLD Lv.5</div>
+    <div class="score">15,828<span class="pumbility-point-sub">.94</span></div>
+  </div>
+</div>
+`;
+
 const TOP_PLAYS_HTML = `
 <div class="rating_rangking_list_w pumblitiySt">
   <ul class="list">
@@ -129,6 +138,41 @@ const TOP_PLAYS_HTML = `
         <div class="date"><span class="tt">2026-04-13 13:24:55 (GMT+9)</span></div>
       </li>`;
     }).join("")}
+  </ul>
+</div>
+`;
+
+const PHOENIX2_TOP_PLAYS_HTML = `
+<div class="rating_rangking_list_w top_songSt pumblitiySt">
+  <ul class="list2">
+    <li>
+      <div class="top-wrap" style="background-image:url('https://www.piugame.com/data/song_img2/etude.png')">
+        <div class="stepBall_in">
+          <div class="tw"><img src="https://www.piugame.com/l_img/p2/stepball/full/s_text.png" /></div>
+          <div class="numw"><img src="https://www.piugame.com/l_img/p2/stepball/full/s_num_1.png" /><img src="https://www.piugame.com/l_img/p2/stepball/full/s_num_7.png" /></div>
+        </div>
+      </div>
+      <div class="mid-wrap">Etude Op 10-4 - MAX</div>
+      <div class="bottom-wrap">
+        <div class="in grade"><img src="https://www.piugame.com/l_img/p2/grade/ss.png" /></div>
+        <div class="in plate"><img src="https://www.piugame.com/l_img/plate/s_sg.png" /></div>
+        <div class="in score"><div>325<span class="pumbility-point-sub">.16</span></div></div>
+      </div>
+    </li>
+    <li>
+      <div class="top-wrap" style="background-image:url('https://www.piugame.com/data/song_img2/euphorianic.png')">
+        <div class="stepBall_in">
+          <div class="tw"><img src="https://www.piugame.com/l_img/p2/stepball/full/d_text.png" /></div>
+          <div class="numw"><img src="https://www.piugame.com/l_img/p2/stepball/full/d_num_2.png" /><img src="https://www.piugame.com/l_img/p2/stepball/full/d_num_0.png" /></div>
+        </div>
+      </div>
+      <div class="mid-wrap">Euphorianic - SHORT CUT - - SHK</div>
+      <div class="bottom-wrap">
+        <div class="in grade"><img src="https://www.piugame.com/l_img/p2/grade/sss_p.png" /></div>
+        <div class="in plate"><img src="https://www.piugame.com/l_img/plate/s_mg.png" /></div>
+        <div class="in score"><div>320<span class="pumbility-point-sub">.32</span></div></div>
+      </div>
+    </li>
   </ul>
 </div>
 `;
@@ -251,6 +295,11 @@ describe("parsers", () => {
     expect(score).toBe(9352);
   });
 
+  test("parsePumbilityScore extracts PHOENIX 2 decimal score", () => {
+    const score = parsePumbilityScore(PHOENIX2_PUMBILITY_SCORE_HTML);
+    expect(score).toBe(15828.94);
+  });
+
   test("parseTopPlays extracts pumbility-contributing entries", () => {
     const plays = parseTopPlays(TOP_PLAYS_HTML);
 
@@ -270,6 +319,35 @@ describe("parsers", () => {
     expect(last.rank).toBe(50);
     expect(last.songName).toBe("Cleaner");
     expect(last.score).toBe(160);
+  });
+
+  test("parseTopPlays extracts PHOENIX 2 decimal entries without dates", () => {
+    const plays = parseTopPlays(PHOENIX2_TOP_PLAYS_HTML);
+
+    expect(plays).toHaveLength(2);
+    expect(plays[0]).toEqual({
+      rank: 1,
+      songName: "Etude Op 10-4",
+      artist: "MAX",
+      songImageUrl: "https://www.piugame.com/data/song_img2/etude.png",
+      mode: "S",
+      level: "17",
+      grade: "ss",
+      plate: "s_sg",
+      score: 325.16,
+      playedAt: null,
+    });
+    expect(plays[1]).toMatchObject({
+      rank: 2,
+      songName: "Euphorianic - SHORT CUT -",
+      artist: "SHK",
+      mode: "D",
+      level: "20",
+      grade: "sss_p",
+      plate: "s_mg",
+      score: 320.32,
+      playedAt: null,
+    });
   });
 
   test("parseTitleEntries extracts title state and metadata", () => {
