@@ -151,6 +151,28 @@ npm run review:media-ui
 - The media review UI supports dragging local audio files onto an audio item; uploads are copied to `data/audio_previews/manual/` and saved as a manual audio override.
 - Useful flags: `--phase=audio|youtube-index|youtube|youtube-reconcile|youtube-backfill|all`, `--dry-run`, `--max-pages=20`, `--limit-charts=100`, `--youtube-search-fallback`, `--youtube-search-budget=25`, `--youtube-chart-search-fallback`, `--download-audio`, `--show-browser`, `--playwright-timeout-ms=45000`.
 
+## Per-client TLS policy
+
+`PiuClientOptions.ca` optionally supplies PEM CA certificates for this client's built-in HTTPS text **and binary asset** requests. It replaces Node's default CA list; include the runtime's existing trusted roots when adding a verified intermediate. The custom `transport` option still owns its own text-request TLS behavior; binary downloads use the client's options.
+
+For example, on Node 24 with a reviewed intermediate:
+
+```ts
+import { getCACertificates } from "node:tls";
+const client = new PiuClient({
+  version: "phoenix2",
+  ca: [...getCACertificates("default"), verifiedIntermediatePem],
+  rejectUnauthorized: true,
+  allowInsecureTlsFallback: false,
+});
+```
+
+The SDK keeps hostname, certificate expiry and full trusted-root chain checks enabled; partial-chain trust is disabled. Explicit constructor verification/fallback choices now apply to binary downloads too, and override environment defaults. Options are captured when the client is created.
+
+For compatibility, this release does **not** change the legacy defaults: insecure fallback remains enabled for PIU-base text clients and, separately, binary assets when no option/environment setting is supplied. Set both strict options explicitly for sensitive traffic. An incomplete upstream chain should be repaired or supplemented with reviewed issuer material; it is not a reason to accept arbitrary expired, wrong-hostname or self-signed certificates. No global trust store or process CA setting is changed by this API.
+
+Hermetic TLS tests generate disposable keys/certificates using the system `openssl` executable and local HTTPS servers. They do not contact PIUGAME, load account credentials, or retain private keys. Existing CI exercises supported Node 18/20/22; Node 24 is also qualified locally.
+
 ## Environment Variables (For Development)
 
 - `PIU_TEST_USERNAME`, `PIU_TEST_PASSWORD` (required for tests/examples)
