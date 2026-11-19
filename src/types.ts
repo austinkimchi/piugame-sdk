@@ -1,3 +1,5 @@
+import type { SecureContextOptions } from "node:tls";
+
 export type EndpointName =
   | "player_data"
   | "recent_plays"
@@ -35,6 +37,11 @@ export interface PiuClientOptions {
   fetchAllPlaysConcurrency?: number;
   cacheTtl?: Partial<CacheTtlConfig>;
   userAgent?: string;
+  /** Per-client CA list for HTTPS text and binary requests. Replaces Node's defaults.
+   * Include the existing trusted roots when adding intermediate certificates.
+   * A custom transport is responsible for its own TLS configuration.
+   */
+  ca?: SecureContextOptions["ca"];
   rejectUnauthorized?: boolean;
   allowInsecureTlsFallback?: boolean;
   ssoAutoResolve?: boolean;

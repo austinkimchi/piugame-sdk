@@ -445,11 +445,14 @@ function createDefaultTransport(
   defaultTimeoutMs: number,
   rejectUnauthorized: boolean,
   allowInsecureTlsFallback: boolean,
+  ca: PiuClientOptions["ca"],
 ): HttpTransport {
   const httpAgent = new http.Agent({ keepAlive: true });
   const httpsAgentStrict = new https.Agent({
     keepAlive: true,
     rejectUnauthorized,
+    ca,
+    allowPartialTrustChain: false,
   });
   const httpsAgentInsecure = new https.Agent({
     keepAlive: true,
@@ -579,6 +582,10 @@ export class PiuClient {
   private readonly songImageDownloadLocks = new Map<string, Promise<void>>();
   private readonly assetImageDownloadLocks = new Map<string, Promise<void>>();
 
+  private readonly tlsCa: PiuClientOptions["ca"];
+  private readonly rejectUnauthorized: boolean;
+  private readonly allowInsecureAssetTlsFallback: boolean;
+
   private mongoStorage: MongoStorage | null = null;
 
   public constructor(options: PiuClientOptions = {}) {
@@ -602,6 +609,10 @@ export class PiuClient {
       fallbackFromEnv ??
       isPiuHost(this.baseUrl);
     const rejectUnauthorized = options.rejectUnauthorized ?? !insecureTlsFromEnv;
+    this.tlsCa = options.ca;
+    this.rejectUnauthorized = rejectUnauthorized;
+    // Preserve the legacy asset default, while honoring explicit client policy.
+    this.allowInsecureAssetTlsFallback = options.allowInsecureTlsFallback ?? fallbackFromEnv ?? true;
     this.ssoAutoResolve = options.ssoAutoResolve ?? true;
     this.ssoHeadless = options.ssoHeadless ?? true;
     this.ssoTimeoutMs = options.ssoTimeoutMs ?? DEFAULT_SSO_TIMEOUT_MS;
@@ -619,7 +630,7 @@ export class PiuClient {
       parseBooleanEnvFromKeys(GRADE_PLATE_ASSET_ENABLE_ENV_KEY, ASSET_MAP_ENABLE_ENV_KEY) ?? false;
     this.transport =
       options.transport ??
-      createDefaultTransport(this.timeoutMs, rejectUnauthorized, allowInsecureTlsFallback);
+      createDefaultTransport(this.timeoutMs, rejectUnauthorized, allowInsecureTlsFallback, this.tlsCa);
   }
 
   public async setDatabase(mongoUri: string): Promise<void> {
@@ -1320,9 +1331,8 @@ export class PiuClient {
   }
 
   private async downloadBinaryAsset(urlText: string): Promise<Buffer> {
-    const fallbackToInsecureTls =
-      parseBooleanEnv(process.env[TLS_FALLBACK_ENV_KEY]) ?? true;
-    const forceInsecureTls = parseBooleanEnv(process.env[INSECURE_TLS_ENV_KEY]) ?? false;
+    const fallbackToInsecureTls = this.allowInsecureAssetTlsFallback;
+    const forceInsecureTls = !this.rejectUnauthorized;
 
     try {
       return await this.requestBinary(urlText, forceInsecureTls);
@@ -1370,6 +1380,8 @@ export class PiuClient {
             ? new https.Agent({
                 keepAlive: true,
                 rejectUnauthorized: !useInsecureTls,
+                ca: this.tlsCa,
+                allowPartialTrustChain: false,
               })
             : new http.Agent({ keepAlive: true }),
         },
